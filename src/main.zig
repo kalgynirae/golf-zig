@@ -136,36 +136,27 @@ pub fn main() !void {
             }
         }
 
+        // Update hovered cursor
+        hovered_cursor_i = null;
+        const mousepos = rl.getMousePosition();
+        var min_distance: f32 = 50;
+        for (state.cursors.items, 0..) |cursor, i| {
+            const distance = cursor.pos.subtract(mousepos).length();
+            if (distance < min_distance) {
+                min_distance = distance;
+                hovered_cursor_i = i;
+            }
+        }
+
         switch (state.mode) {
             .selecting => {
-                if (commands.act) {
-                    // Set cursor active
+                if (commands.act or commands.shift_act) {
+                    // Set cursor active and switch mode
                     if (hovered_cursor_i) |i| {
                         var cursor = &state.cursors.items[i];
                         cursor.state = .active;
+                        state.mode = .aiming;
                     }
-                } else if (commands.shift_act) {
-                    // Toggle cursor state
-                    if (hovered_cursor_i) |i| {
-                        var cursor = &state.cursors.items[i];
-                        cursor.state = if (cursor.state == .inactive) .active else .inactive;
-                    }
-                } else {
-                    // Update hovered cursor
-                    hovered_cursor_i = null;
-                    const mousepos = rl.getMousePosition();
-                    var min_distance: f32 = 50;
-                    for (state.cursors.items, 0..) |cursor, i| {
-                        const distance = cursor.pos.subtract(mousepos).length();
-                        if (distance < min_distance) {
-                            min_distance = distance;
-                            hovered_cursor_i = i;
-                        }
-                    }
-                }
-                // Only switch to aiming if the click was actually on a cursor
-                if (commands.act and hovered_cursor_i != null) {
-                    state.mode = .aiming;
                 }
             },
             .aiming => {
@@ -183,7 +174,18 @@ pub fn main() !void {
                     }
                     state.mode = .selecting;
                 } else if (commands.shift_act) {
-                    rl.clearBackground(rl.Color.red);
+                    if (hovered_cursor_i) |i| {
+                        var cursor = &state.cursors.items[i];
+                        cursor.state = if (cursor.state == .inactive) .active else .inactive;
+                    }
+                    any: {
+                        for (state.cursors.items) |cursor| {
+                            if (cursor.state == .active) {
+                                break :any;
+                            }
+                        }
+                        state.mode = .selecting;
+                    }
                 }
             },
         }
@@ -194,6 +196,10 @@ pub fn main() !void {
         // Align cursors to balls
         for (state.cursors.items) |*cursor| {
             cursor.pos = state.balls.items[cursor.current_ball].pos;
+        }
+        // Point cursors at mouse
+        for (state.cursors.items) |*cursor| {
+            cursor.angle = rl.getMousePosition().subtract(cursor.pos).normalize();
         }
 
         // -- DRAWING ----------------------------
