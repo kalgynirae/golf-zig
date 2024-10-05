@@ -126,6 +126,9 @@ const GameState = struct {
     }
 };
 
+var CLICK: rl.Sound = undefined;
+var LOWCLICK: rl.Sound = undefined;
+
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
@@ -149,6 +152,16 @@ pub fn main() !void {
     rl.initWindow(WIDTH, HEIGHT, "Golf!");
     defer rl.closeWindow();
 
+    rl.initAudioDevice();
+    defer rl.closeAudioDevice();
+
+    CLICK = rl.loadSound("assets/click.wav");
+    LOWCLICK = rl.loadSound("assets/lowclick.wav");
+
+    const music = rl.loadMusicStream("assets/placeholder-music.ogg");
+    rl.setMusicVolume(music, 0.4);
+    rl.playMusicStream(music);
+
     rl.setTargetFPS(60);
 
     var camera = rl.Camera2D{
@@ -159,6 +172,8 @@ pub fn main() !void {
     };
 
     main: while (!rl.windowShouldClose()) {
+        rl.updateMusicStream(music);
+
         if (state.mode != last_mode) {
             std.debug.print("Mode changed: {}", .{state.mode});
             last_mode = state.mode;
@@ -358,6 +373,9 @@ fn processPhysics(balls: []Ball, platforms: []Platform) void {
                 }
                 break :reflect Vector2.zero();
             };
+            if (reflection.equals(Vector2.zero()) == 0) {
+                rl.playSound(LOWCLICK);
+            }
             ball.pos = ball.pos.add(delta.reflect(reflection));
             ball.velocity = ball.velocity.reflect(reflection);
 
@@ -397,11 +415,11 @@ fn processPhysics(balls: []Ball, platforms: []Platform) void {
                     const between = a.pos.subtract(b.pos).normalize();
                     const a_parallel_vel = between.scale(a.velocity.dotProduct(between));
                     const b_parallel_vel = between.scale(b.velocity.dotProduct(between));
-                    // TODO: collision
                     a.velocity = a.velocity.subtract(a_parallel_vel).add(b_parallel_vel);
                     b.velocity = b.velocity.add(a_parallel_vel).subtract(b_parallel_vel);
                     a.spin = a.spin.scale(0.5);
                     b.spin = b.spin.scale(0.5);
+                    rl.playSound(CLICK);
                 }
             }
         }
