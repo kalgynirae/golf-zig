@@ -6,7 +6,11 @@ const BoundedArray = std.BoundedArray;
 const rl = @import("raylib");
 const Vector2 = rl.Vector2;
 
+const rg = @import("raygui");
+
 const CURSOR_SPACING: f32 = 12;
+const WIDTH: i32 = 800;
+const HEIGHT: i32 = 600;
 
 const Ball = struct {
     const Self = @This();
@@ -23,20 +27,21 @@ const Ball = struct {
             .pos = Vector2.init(x, y),
             .radius = CURSOR_SPACING,
             .velocity = Vector2.zero(),
-            .spin = Vector2.zero(),
+            .spin = Vector2.init(10, 0),
 
             .cursors = BoundedArray(Cursor, 8).init(0) catch unreachable,
         };
     }
 
     fn addCursor(self: *Self) void {
-        self.cursors.appendAssumeCapacity(Cursor.init(self.cursors.len));
+        const radius = CURSOR_SPACING * @as(f32, @floatFromInt(2 + self.cursors.len));
+        self.cursors.appendAssumeCapacity(Cursor.init(radius));
     }
 
-    fn hit(self: *Self) void {
+    fn hit(self: *Self, strength: u32) void {
         if (self.cursors.len > 0) {
             const cursor = self.cursors.orderedRemove(0);
-            const delta = cursor.angle.scale(0.04);
+            const delta = cursor.angle.normalize().scale(@floatFromInt(strength));
             self.velocity = self.velocity.add(delta);
         }
     }
@@ -47,11 +52,11 @@ const Cursor = struct {
     angle: Vector2,
     radius: f32,
 
-    fn init(level: u32) Cursor {
+    fn init(radius: f32) Cursor {
         return Cursor{
             .state = .aiming,
             .angle = Vector2.init(1, 0),
-            .radius = @as(f32, @floatFromInt(level + 1)) * CURSOR_SPACING,
+            .radius = radius,
         };
     }
 };
@@ -73,6 +78,16 @@ const Hole = struct {
     }
 };
 
+const Platform = struct {
+    rec: rl.Rectangle,
+
+    fn init(x: f32, y: f32, width: f32, height: f32) Platform {
+        return Platform{
+            .rec = rl.Rectangle.init(x, y, width, height),
+        };
+    }
+};
+
 const GameMode = enum {
     playing,
     paused,
@@ -85,11 +100,13 @@ const GameState = struct {
 
     balls: BoundedArray(Ball, 16),
     holes: BoundedArray(Hole, 16),
+    platforms: BoundedArray(Platform, 32),
 
     fn init() Self {
         return Self{
             .balls = BoundedArray(Ball, 16).init(0) catch unreachable,
             .holes = BoundedArray(Hole, 16).init(0) catch unreachable,
+            .platforms = BoundedArray(Platform, 32).init(0) catch unreachable,
         };
     }
 
@@ -97,6 +114,7 @@ const GameState = struct {
         return Self{
             .balls = self.balls,
             .holes = self.holes,
+            .platforms = self.platforms,
         };
     }
 };
@@ -109,19 +127,29 @@ pub fn main() !void {
 
     var pastStates = ArrayList(GameState).init(allocator);
     var futureStates = ArrayList(GameState).init(allocator);
-    var state = GameState.init();
-
-    try state.balls.append(Ball.init(50, 50));
-    try state.balls.append(Ball.init(500, 100));
-    try state.holes.append(Hole.init(600, 400));
+    var state = level1();
 
     var last_mode: GameMode = state.mode;
     var hovered_ball: ?usize = null;
+    var any_aiming_cursors = false;
+    var any_set_cursors = false;
     var potentially_adding_cursor = false;
+    var strength: ?u32 = null;
 
+    _ = rg.guiLoadIcons("assets/iconset.rgi", false);
+    _ = rg.guiSetIconScale(2);
     rl.setConfigFlags(rl.ConfigFlags{ .vsync_hint = true });
-    rl.initWindow(800, 600, "test");
+    rl.initWindow(WIDTH, HEIGHT, "Golf!");
     defer rl.closeWindow();
+
+    rl.setTargetFPS(60);
+
+    var camera = rl.Camera2D{
+        .offset = Vector2.zero(),
+        .target = Vector2.zero(),
+        .rotation = 0,
+        .zoom = 1.0,
+    };
 
     main: while (!rl.windowShouldClose()) {
         if (state.mode != last_mode) {
@@ -132,7 +160,6 @@ pub fn main() !void {
         defer rl.endDrawing();
 
         rl.clearBackground(rl.Color.black);
-        rl.drawText("Golf!", 710, 10, 32, rl.Color.light_gray);
 
         const input = getInput();
         if (input.quit) {
@@ -164,7 +191,7 @@ pub fn main() !void {
 
                 // Update hovered cursor
                 hovered_ball = null;
-                const mousepos = rl.getMousePosition();
+                const mousepos = rl.getMousePosition().transform(camera.getMatrix().invert());
                 var min_distance: f32 = 100;
                 for (state.balls.slice(), 0..) |ball, i| {
                     const distance = ball.pos.subtract(mousepos).length();
@@ -174,8 +201,8 @@ pub fn main() !void {
                     }
                 }
 
-                var any_aiming_cursors = false;
-                var any_set_cursors = false;
+                any_aiming_cursors = false;
+                any_set_cursors = false;
                 for (state.balls.constSlice()) |ball| {
                     for (ball.cursors.constSlice()) |cursor| {
                         if (cursor.state == .aiming) {
@@ -188,6 +215,13 @@ pub fn main() !void {
 
                 potentially_adding_cursor = (!any_aiming_cursors and !any_set_cursors) or input.shift;
 
+                if (strength) |s| {
+                    try pastStates.append(state);
+                    state = state.clone();
+                    for (state.balls.slice()) |*ball| {
+                        ball.hit(s);
+                    }
+                }
                 if (input.primary) {
                     if (potentially_adding_cursor) {
                         if (hovered_ball) |i| {
@@ -201,12 +235,6 @@ pub fn main() !void {
                                 }
                             }
                         }
-                    } else {
-                        try pastStates.append(state);
-                        state = state.clone();
-                        for (state.balls.slice()) |*ball| {
-                            ball.hit();
-                        }
                     }
                 }
 
@@ -217,7 +245,7 @@ pub fn main() !void {
                 for (state.balls.slice()) |*ball| {
                     for (ball.cursors.slice()) |*cursor| {
                         if (cursor.state == .aiming) {
-                            cursor.angle = rl.getMousePosition().subtract(ball.pos);
+                            cursor.angle = rl.getMousePosition().transform(camera.getMatrix().invert()).subtract(ball.pos);
                         }
                     }
                 }
@@ -225,53 +253,99 @@ pub fn main() !void {
         }
 
         // -- DRAWING ----------------------------
-        // holes
-        for (state.holes.slice()) |hole| {
-            rl.drawCircleV(hole.pos, hole.radius, rl.Color.init(20, 80, 20, 255));
-        }
-        // balls
-        for (state.balls.slice()) |ball| {
-            rl.drawCircleV(ball.pos, ball.radius, rl.Color.blue);
-        }
-        // cursors
-        for (state.balls.slice()) |ball| {
-            for (ball.cursors.slice()) |cursor| {
-                const color = switch (cursor.state) {
-                    .aiming => rl.Color.orange,
-                    .set => rl.Color.green,
-                };
-                rl.drawCircleLinesV(ball.pos, cursor.radius, color);
-                rl.drawTriangle(
-                    ball.pos.add(cursor.angle.normalize().scale(cursor.radius).rotate(0.2)),
-                    ball.pos.add(cursor.angle),
-                    ball.pos.add(cursor.angle.normalize().scale(cursor.radius).rotate(-0.2)),
-                    color,
-                );
+        {
+            camera.begin();
+            defer camera.end();
+
+            //platforms
+            // for (state.platforms.slice()) |platform| {
+            //     rl.drawRectangleRec(platform.rec, rl.Color.init(30, 80, 95, 255));
+            // }
+            // holes
+            for (state.holes.slice()) |hole| {
+                rl.drawCircleV(hole.pos, hole.radius, rl.Color.init(0, 60, 10, 255));
+            }
+            // balls
+            for (state.balls.slice()) |ball| {
+                rl.drawCircleV(ball.pos, ball.radius, rl.Color.blue);
+                rl.drawLineV(ball.pos, ball.pos.add(ball.velocity.scale(5)), rl.Color.purple);
+                rl.drawLineV(ball.pos, ball.pos.add(ball.spin.scale(5)), rl.Color.sky_blue);
+            }
+            // cursors
+            for (state.balls.slice()) |ball| {
+                for (ball.cursors.slice()) |cursor| {
+                    const color = switch (cursor.state) {
+                        .aiming => rl.Color.orange,
+                        .set => rl.Color.green,
+                    };
+                    rl.drawCircleLinesV(ball.pos, cursor.radius, color);
+                    rl.drawTriangle(
+                        ball.pos.add(cursor.angle.normalize().scale(cursor.radius).rotate(0.2)),
+                        ball.pos.add(cursor.angle.normalize().scale(cursor.radius + 6)),
+                        ball.pos.add(cursor.angle.normalize().scale(cursor.radius).rotate(-0.2)),
+                        color,
+                    );
+                }
+            }
+            // placeholder cursor
+            if (potentially_adding_cursor) {
+                if (hovered_ball) |i| {
+                    const ball = state.balls.get(i);
+                    const next_level: u32 = ball.cursors.len + 1;
+                    rl.drawCircleLinesV(
+                        ball.pos,
+                        ball.radius + CURSOR_SPACING * @as(f32, @floatFromInt(next_level)),
+                        rl.Color.sky_blue,
+                    );
+                }
             }
         }
-        // placeholder cursor
-        if (potentially_adding_cursor) {
-            if (hovered_ball) |i| {
-                const ball = state.balls.get(i);
-                const nesting: u32 = ball.cursors.len + 1;
-                rl.drawCircleLinesV(
-                    ball.pos,
-                    ball.radius + CURSOR_SPACING * @as(f32, @floatFromInt(nesting)),
-                    rl.Color.sky_blue,
-                );
-            }
-        }
+
         // mouse indicator
         rl.drawCircle(rl.getMouseX(), rl.getMouseY(), 8, rl.Color.gold);
+
+        rl.drawText("Golf!", 710, 10, 32, rl.Color.light_gray);
+
+        strength = null;
+        if (!potentially_adding_cursor and !any_aiming_cursors) {
+            strength = getHitStrength();
+        }
     }
 }
 
 fn processPhysics(balls: []Ball) void {
-    for (balls) |*ball| {
-        ball.pos = ball.pos.add(ball.velocity.clampValue(0, 10.0));
-        ball.velocity = ball.velocity.scale(0.96);
-        if (ball.velocity.length() < 0.1) {
-            ball.velocity = Vector2.zero();
+    const STEPS = 1;
+    const SCALE: f32 = 1.0 / @as(f32, @floatFromInt(STEPS));
+    const MAX_SPEED: f32 = 20.0 / @as(f32, @floatFromInt(STEPS));
+
+    for (0..STEPS) |_| {
+        for (balls) |*ball| {
+            if (ball.velocity.length() < 0.5) {
+                ball.spin = Vector2.zero();
+                ball.velocity = Vector2.zero();
+                continue;
+            }
+
+            // position
+            ball.pos = ball.pos.add(ball.velocity.scale(SCALE).clampValue(0, MAX_SPEED));
+
+            // spin
+            // reduce in perpendicular direction
+            const velocity_dir = ball.velocity.normalize();
+            const parallel_spin_len = ball.spin.dotProduct(velocity_dir);
+            const parallel_spin = velocity_dir.scale(parallel_spin_len);
+            // rl.drawLineEx(ball.pos, ball.pos.add(parallel_component), 5, rl.Color.red);
+            const perpendicular_spin = ball.spin.subtract(parallel_spin);
+            // rl.drawLineEx(ball.pos, ball.pos.add(perpendicular_component.scale(10)), 5, rl.Color.yellow);
+            ball.spin = ball.spin.subtract(perpendicular_spin.scale(0.2).scale(SCALE));
+            // increase in parallel direction
+            const velocity_spin_diff = ball.velocity.length() - parallel_spin_len;
+            ball.spin = ball.spin.add(velocity_dir.scale(velocity_spin_diff).scale(0.2).scale(SCALE));
+
+            // friction
+            // parallel spin reduces friction
+            const friction = 0.08 - 0.05 * (parallel_spin_len / ball.velocity.length());
+            ball.velocity = ball.velocity.scale(1.0 - friction).scale(SCALE);
         }
     }
 }
@@ -309,4 +383,30 @@ fn getInput() Input {
         input.secondary = true;
     }
     return input;
+}
+
+fn getHitStrength() ?u32 {
+    var strength: ?u32 = null;
+    if (rg.guiButton(rl.Rectangle.init(0, HEIGHT - 50, WIDTH / 4, 50), "#220#") != 0) {
+        strength = 5;
+    }
+    if (rg.guiButton(rl.Rectangle.init(1 * (WIDTH / 4), HEIGHT - 50, WIDTH / 4, 50), "#221#") != 0) {
+        strength = 10;
+    }
+    if (rg.guiButton(rl.Rectangle.init(2 * (WIDTH / 4), HEIGHT - 50, WIDTH / 4, 50), "#222#") != 0) {
+        strength = 30;
+    }
+    if (rg.guiButton(rl.Rectangle.init(3 * (WIDTH / 4), HEIGHT - 50, WIDTH / 4, 50), "#223#") != 0) {
+        strength = 50;
+    }
+    return strength;
+}
+
+fn level1() GameState {
+    var state = GameState.init();
+    state.balls.appendAssumeCapacity(Ball.init(50, 50));
+    state.balls.appendAssumeCapacity(Ball.init(500, 100));
+    state.holes.appendAssumeCapacity(Hole.init(600, 400));
+    state.platforms.appendAssumeCapacity(Platform.init(20, 20, 760, 560));
+    return state;
 }
