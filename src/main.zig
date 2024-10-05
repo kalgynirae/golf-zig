@@ -105,6 +105,7 @@ const GameState = struct {
     const Self = @This();
 
     mode: GameMode = .playing,
+    next_mode: ?GameMode = null,
 
     balls: BoundedArray(Ball, 16),
     holes: BoundedArray(Hole, 16),
@@ -178,7 +179,7 @@ pub fn main() !void {
         rl.updateMusicStream(music);
 
         if (state.mode != last_mode) {
-            std.debug.print("Mode changed: {}", .{state.mode});
+            std.debug.print("\x1b[1;36mMode changed: {}\x1b[0m\n", .{state.mode});
             last_mode = state.mode;
         }
         rl.beginDrawing();
@@ -191,6 +192,14 @@ pub fn main() !void {
             break :main;
         }
 
+        if (state.next_mode) |mode| {
+            state.mode = mode;
+            state.next_mode = null;
+        }
+        if (input.tick) {
+            state.mode = .playing;
+            state.next_mode = .paused;
+        }
         switch (state.mode) {
             .paused => {
                 if (input.pause) {
@@ -449,7 +458,7 @@ fn processPhysics(balls: []Ball, holes: []Hole, platforms: []Platform) void {
         for (balls) |*ball| {
             if (ball.state != .alive) continue;
             for (holes) |hole| {
-                if (rl.checkCollisionPointCircle(ball.pos, hole.pos, (hole.radius - ball.radius))) {
+                if (rl.checkCollisionPointCircle(ball.pos, hole.pos, (hole.radius - (ball.radius / 2)))) {
                     ball.state = .sunk;
                     rl.playSound(SUNK);
                 }
@@ -461,6 +470,7 @@ fn processPhysics(balls: []Ball, holes: []Hole, platforms: []Platform) void {
 const Input = struct {
     quit: bool = false,
     pause: bool = false,
+    tick: bool = false,
     undo: bool = false,
     redo: bool = false,
     primary: bool = false,
@@ -475,6 +485,9 @@ fn getInput() Input {
     }
     if (rl.isKeyPressed(.key_p)) {
         input.pause = true;
+    }
+    if (rl.isKeyPressed(.key_t)) {
+        input.tick = true;
     }
     input.shift = rl.isKeyDown(.key_left_shift) or rl.isKeyDown(.key_right_shift);
     if (rl.isKeyPressed(.key_u) or rl.isKeyPressed(.key_z)) {
@@ -515,6 +528,7 @@ fn level1() GameState {
     state.balls.appendAssumeCapacity(Ball.init(50, 50));
     state.balls.appendAssumeCapacity(Ball.init(500, 100));
     state.holes.appendAssumeCapacity(Hole.init(600, 400));
-    state.platforms.appendAssumeCapacity(Platform.init(20, 20, 760, 560));
+    state.platforms.appendAssumeCapacity(Platform.init(20, 20, 460, 560));
+    state.platforms.appendAssumeCapacity(Platform.init(460, 40, 200, 500));
     return state;
 }
