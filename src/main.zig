@@ -1,36 +1,43 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
+const BoundedArray = std.BoundedArray;
 
 const rl = @import("raylib");
 const Vector2 = rl.Vector2;
 
 const Ball = struct {
+    const Self = @This();
+
     pos: Vector2,
     radius: f32,
     velocity: Vector2,
     spin: Vector2,
 
-    fn init(x: f32, y: f32) Ball {
-        return Ball{
+    cursors: BoundedArray(usize, 8),
+
+    fn init(x: f32, y: f32) Self {
+        return Self{
             .pos = Vector2.init(x, y),
             .radius = 12,
             .velocity = Vector2.zero(),
             .spin = Vector2.zero(),
+
+            .cursors = BoundedArray(usize, 8).init(0) catch unreachable,
         };
     }
 };
 
 const Cursor = struct {
     state: CursorState,
-    current_ball: u8,
+    current_ball: usize,
     pos: Vector2,
     angle: Vector2,
     radius: f32,
 
-    fn init(ball_index: u8, pos: Vector2) Cursor {
+    fn init(ball_index: usize, pos: Vector2) Cursor {
         return Cursor{
-            .state = .inactive,
+            .state = .aiming,
             .current_ball = ball_index,
             .pos = pos,
             .angle = Vector2.init(1, 0),
@@ -40,8 +47,8 @@ const Cursor = struct {
 };
 
 const CursorState = enum {
-    inactive,
-    active,
+    aiming,
+    set,
 };
 
 const Hole = struct {
@@ -57,31 +64,48 @@ const Hole = struct {
 };
 
 const GameMode = enum {
-    selecting,
-    aiming,
+    playing,
+    paused,
 };
 
 const GameState = struct {
-    mode: GameMode = .selecting,
+    const Self = @This();
+
+    mode: GameMode = .playing,
 
     balls: ArrayList(Ball),
-    cursors: ArrayList(Cursor),
+    cursors: BoundedArray(Cursor, 16),
     holes: ArrayList(Hole),
 
-    fn init(allocator: Allocator) GameState {
-        return GameState{
+    fn init(allocator: Allocator) Self {
+        return Self{
             .balls = ArrayList(Ball).init(allocator),
-            .cursors = ArrayList(Cursor).init(allocator),
+            .cursors = BoundedArray(Cursor, 16).init(0) catch unreachable,
             .holes = ArrayList(Hole).init(allocator),
         };
     }
 
-    fn clone(self: GameState) !GameState {
-        return GameState{
+    fn clone(self: Self) !Self {
+        return Self{
             .balls = try self.balls.clone(),
-            .cursors = try self.cursors.clone(),
+            .cursors = self.cursors,
             .holes = try self.holes.clone(),
         };
+    }
+
+    fn addCursor(self: *Self, ball_i: usize) void {
+        var ball = &self.balls.items[ball_i];
+        const cursor = Cursor.init(ball_i, ball.pos);
+        self.cursors.appendAssumeCapacity(cursor);
+        ball.cursors.appendAssumeCapacity(self.cursors.len - 1);
+    }
+
+    fn hitBall(self: *Self, ball_i: usize) void {
+        var ball = &self.balls.items[ball_i];
+        const cursor_i = ball.cursors.orderedRemove(0);
+        const cursor = self.cursors.orderedRemove(cursor_i);
+        const delta = cursor.angle.scale(0.04);
+        ball.velocity = ball.velocity.add(delta);
     }
 };
 
@@ -97,12 +121,11 @@ pub fn main() !void {
 
     try state.balls.append(Ball.init(50, 50));
     try state.balls.append(Ball.init(500, 100));
-    try state.cursors.append(Cursor.init(0, Vector2.init(50, 50)));
-    try state.cursors.append(Cursor.init(1, Vector2.init(50, 50)));
     try state.holes.append(Hole.init(600, 400));
 
     var last_mode: GameMode = state.mode;
-    var hovered_cursor_i: ?usize = null;
+    var hovered_ball: ?usize = null;
+    var potentially_adding_cursor = false;
 
     rl.setConfigFlags(rl.ConfigFlags{ .vsync_hint = true });
     rl.initWindow(800, 600, "test");
@@ -119,87 +142,97 @@ pub fn main() !void {
         rl.clearBackground(rl.Color.black);
         rl.drawText("Golf!", 710, 10, 32, rl.Color.light_gray);
 
-        const commands = getCommands();
-        if (commands.quit) {
+        const input = getInput();
+        if (input.quit) {
             break :main;
-        }
-        if (commands.undo) {
-            if (pastStates.popOrNull()) |prev| {
-                try futureStates.append(state);
-                state = prev;
-            }
-        }
-        if (commands.redo) {
-            if (futureStates.popOrNull()) |fut| {
-                try pastStates.append(state);
-                state = fut;
-            }
-        }
-
-        // Update hovered cursor
-        hovered_cursor_i = null;
-        const mousepos = rl.getMousePosition();
-        var min_distance: f32 = 50;
-        for (state.cursors.items, 0..) |cursor, i| {
-            const distance = cursor.pos.subtract(mousepos).length();
-            if (distance < min_distance) {
-                min_distance = distance;
-                hovered_cursor_i = i;
-            }
         }
 
         switch (state.mode) {
-            .selecting => {
-                if (commands.act or commands.shift_act) {
-                    // Set cursor active and switch mode
-                    if (hovered_cursor_i) |i| {
-                        var cursor = &state.cursors.items[i];
-                        cursor.state = .active;
-                        state.mode = .aiming;
-                    }
+            .paused => {
+                if (input.pause) {
+                    state.mode = .playing;
                 }
             },
-            .aiming => {
-                if (commands.act) {
-                    try pastStates.append(state);
-                    state = try state.clone();
-                    for (state.cursors.items) |*cursor| {
-                        if (cursor.state == .active) {
-                            cursor.state = .inactive;
-                            var ball = &state.balls.items[cursor.current_ball];
-                            const mouse_pos = rl.getMousePosition();
-                            const dir = rl.math.vector2Scale(mouse_pos.subtract(ball.pos), 0.04);
-                            ball.velocity = ball.velocity.add(dir);
+            .playing => {
+                if (input.pause) {
+                    state.mode = .paused;
+                }
+                if (input.undo) {
+                    if (pastStates.popOrNull()) |prev| {
+                        try futureStates.append(state);
+                        state = prev;
+                    }
+                }
+                if (input.redo) {
+                    if (futureStates.popOrNull()) |fut| {
+                        try pastStates.append(state);
+                        state = fut;
+                    }
+                }
+
+                // Update hovered cursor
+                hovered_ball = null;
+                const mousepos = rl.getMousePosition();
+                var min_distance: f32 = 100;
+                for (state.balls.items, 0..) |ball, i| {
+                    const distance = ball.pos.subtract(mousepos).length();
+                    if (distance < min_distance) {
+                        min_distance = distance;
+                        hovered_ball = i;
+                    }
+                }
+
+                var any_aiming_cursors = false;
+                var any_set_cursors = false;
+                for (state.cursors.slice()) |cursor| {
+                    if (cursor.state == .aiming) {
+                        any_aiming_cursors = true;
+                    } else if (cursor.state == .set) {
+                        any_set_cursors = true;
+                    }
+                }
+
+                potentially_adding_cursor = (!any_aiming_cursors and !any_set_cursors) or input.shift;
+
+                if (input.primary) {
+                    if (potentially_adding_cursor) {
+                        if (hovered_ball) |i| {
+                            state.addCursor(i);
                         }
-                    }
-                    state.mode = .selecting;
-                } else if (commands.shift_act) {
-                    if (hovered_cursor_i) |i| {
-                        var cursor = &state.cursors.items[i];
-                        cursor.state = if (cursor.state == .inactive) .active else .inactive;
-                    }
-                    any: {
-                        for (state.cursors.items) |cursor| {
-                            if (cursor.state == .active) {
-                                break :any;
+                    } else if (any_aiming_cursors) {
+                        for (state.cursors.slice()) |*cursor| {
+                            if (cursor.state == .aiming) {
+                                cursor.state = .set;
                             }
                         }
-                        state.mode = .selecting;
+                    } else {
+                        try pastStates.append(state);
+                        state = try state.clone();
+                        for (state.balls.items, 0..) |ball, i| {
+                            if (ball.cursors.len > 0) {
+                                const cursor_i = ball.cursors.get(0);
+                                if (state.cursors.get(cursor_i).state == .set) {
+                                    state.hitBall(i);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // -- PHYSICS ----------------------------
+                process_physics(state.balls);
+
+                // Align cursors to balls
+                for (state.cursors.slice()) |*cursor| {
+                    cursor.pos = state.balls.items[cursor.current_ball].pos;
+                }
+                // Point cursors at mouse
+                for (state.cursors.slice()) |*cursor| {
+                    if (cursor.state == .aiming) {
+                        cursor.angle = rl.getMousePosition().subtract(cursor.pos);
                     }
                 }
             },
-        }
-
-        // -- PHYSICS ----------------------------
-        process_physics(state.balls);
-
-        // Align cursors to balls
-        for (state.cursors.items) |*cursor| {
-            cursor.pos = state.balls.items[cursor.current_ball].pos;
-        }
-        // Point cursors at mouse
-        for (state.cursors.items) |*cursor| {
-            cursor.angle = rl.getMousePosition().subtract(cursor.pos).normalize();
         }
 
         // -- DRAWING ----------------------------
@@ -212,17 +245,23 @@ pub fn main() !void {
             rl.drawCircleV(ball.pos, ball.radius, rl.Color.blue);
         }
         // cursors
-        for (state.cursors.items, 0..) |cursor, i| {
-            const ball = state.balls.items[cursor.current_ball];
-            const color = if (i == hovered_cursor_i or cursor.state == .active) rl.Color.orange else rl.Color.green;
-            rl.drawCircleLinesV(ball.pos, 24, color);
-            if (state.mode == .aiming and cursor.state == .active) {
-                rl.drawTriangle(
-                    ball.pos.add(cursor.angle.normalize().scale(cursor.radius).rotate(0.2)),
-                    ball.pos.add(cursor.angle.normalize().scale(cursor.radius).scale(1.4)),
-                    ball.pos.add(cursor.angle.normalize().scale(cursor.radius).rotate(-0.2)),
-                    color,
-                );
+        for (state.cursors.slice()) |cursor| {
+            const color = switch (cursor.state) {
+                .aiming => rl.Color.orange,
+                .set => rl.Color.green,
+            };
+            rl.drawCircleLinesV(cursor.pos, 24, color);
+            rl.drawTriangle(
+                cursor.pos.add(cursor.angle.normalize().scale(cursor.radius).rotate(0.2)),
+                cursor.pos.add(cursor.angle),
+                cursor.pos.add(cursor.angle.normalize().scale(cursor.radius).rotate(-0.2)),
+                color,
+            );
+        }
+        // placeholder cursor
+        if (potentially_adding_cursor) {
+            if (hovered_ball) |i| {
+                rl.drawCircleLinesV(state.balls.items[i].pos, 24, rl.Color.sky_blue);
             }
         }
         // mouse indicator
@@ -240,36 +279,34 @@ fn process_physics(balls: ArrayList(Ball)) void {
     }
 }
 
-const Commands = struct {
+const Input = struct {
     quit: bool = false,
+    pause: bool = false,
     undo: bool = false,
     redo: bool = false,
-    act: bool = false,
-    shift_act: bool = false,
+    primary: bool = false,
+    secondary: bool = false,
+    shift: bool = false,
 };
 
-fn getCommands() Commands {
-    var commands = Commands{};
+fn getInput() Input {
+    var input = Input{};
     if (rl.isKeyPressed(.key_q)) {
-        commands.quit = true;
+        input.quit = true;
     }
+    if (rl.isKeyPressed(.key_p)) {
+        input.pause = true;
+    }
+    input.shift = rl.isKeyDown(.key_left_shift) or rl.isKeyDown(.key_right_shift);
     if (rl.isKeyPressed(.key_u) or rl.isKeyPressed(.key_z)) {
-        if (isShiftDown()) {
-            commands.redo = true;
+        if (input.shift) {
+            input.redo = true;
         } else {
-            commands.undo = true;
+            input.undo = true;
         }
     }
     if (rl.isKeyPressed(.key_space) or rl.isMouseButtonPressed(.mouse_button_left)) {
-        if (isShiftDown()) {
-            commands.shift_act = true;
-        } else {
-            commands.act = true;
-        }
+        input.primary = true;
     }
-    return commands;
-}
-
-fn isShiftDown() bool {
-    return rl.isKeyDown(.key_left_shift) or rl.isKeyDown(.key_right_shift);
+    return input;
 }
