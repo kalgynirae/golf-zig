@@ -15,6 +15,7 @@ const HEIGHT: i32 = 600;
 const BallState = enum {
     alive,
     dead,
+    sunk,
 };
 
 const Ball = struct {
@@ -128,6 +129,7 @@ const GameState = struct {
 
 var CLICK: rl.Sound = undefined;
 var LOWCLICK: rl.Sound = undefined;
+var SUNK: rl.Sound = undefined;
 
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -157,6 +159,7 @@ pub fn main() !void {
 
     CLICK = rl.loadSound("assets/click.wav");
     LOWCLICK = rl.loadSound("assets/lowclick.wav");
+    SUNK = rl.loadSound("assets/sunk.wav");
 
     const music = rl.loadMusicStream("assets/placeholder-music.ogg");
     rl.setMusicVolume(music, 0.4);
@@ -216,6 +219,7 @@ pub fn main() !void {
                 const mousepos = rl.getMousePosition().transform(camera.getMatrix().invert());
                 var min_distance: f32 = 100;
                 for (state.balls.slice(), 0..) |ball, i| {
+                    if (ball.state != .alive) continue;
                     const distance = ball.pos.subtract(mousepos).length();
                     if (distance < min_distance) {
                         min_distance = distance;
@@ -261,7 +265,11 @@ pub fn main() !void {
                 }
 
                 // -- PHYSICS ----------------------------
-                processPhysics(state.balls.slice(), state.platforms.slice());
+                processPhysics(
+                    state.balls.slice(),
+                    state.holes.slice(),
+                    state.platforms.slice(),
+                );
 
                 // Point cursors at mouse
                 for (state.balls.slice()) |*ball| {
@@ -289,9 +297,17 @@ pub fn main() !void {
             }
             // balls
             for (state.balls.slice()) |ball| {
-                rl.drawCircleV(ball.pos, ball.radius, if (ball.state == .alive) rl.Color.blue else rl.Color.gray);
-                rl.drawLineV(ball.pos, ball.pos.add(ball.velocity.scale(5)), rl.Color.purple);
-                rl.drawLineV(ball.pos, ball.pos.add(ball.spin.scale(5)), rl.Color.sky_blue);
+                switch (ball.state) {
+                    .alive => {
+                        rl.drawCircleV(ball.pos, ball.radius, rl.Color.blue);
+                        rl.drawLineV(ball.pos, ball.pos.add(ball.velocity.scale(5)), rl.Color.purple);
+                        rl.drawLineV(ball.pos, ball.pos.add(ball.spin.scale(5)), rl.Color.sky_blue);
+                    },
+                    .dead => {
+                        rl.drawCircleV(ball.pos, ball.radius, rl.Color.dark_gray);
+                    },
+                    .sunk => {},
+                }
             }
             // cursors
             for (state.balls.slice()) |ball| {
@@ -335,13 +351,16 @@ pub fn main() !void {
     }
 }
 
-fn processPhysics(balls: []Ball, platforms: []Platform) void {
+fn processPhysics(balls: []Ball, holes: []Hole, platforms: []Platform) void {
     const STEPS = 1;
     const SCALE: f32 = 1.0 / @as(f32, @floatFromInt(STEPS));
     const MAX_SPEED: f32 = 25.0 / @as(f32, @floatFromInt(STEPS));
 
     for (0..STEPS) |_| {
         for (balls) |*ball| {
+            if (ball.state == .sunk) {
+                continue;
+            }
             if (ball.velocity.length() < 0.5 and ball.spin.length() < 0.5) {
                 ball.spin = Vector2.zero();
                 ball.velocity = Vector2.zero();
@@ -410,7 +429,9 @@ fn processPhysics(balls: []Ball, platforms: []Platform) void {
 
         // other balls
         for (balls[0..(balls.len - 1)], 0..) |*a, ai| {
+            if (a.state != .alive) continue;
             for (balls[(ai + 1)..balls.len]) |*b| {
+                if (b.state != .alive) continue;
                 if (rl.checkCollisionCircles(a.pos, a.radius, b.pos, b.radius)) {
                     const between = a.pos.subtract(b.pos).normalize();
                     const a_parallel_vel = between.scale(a.velocity.dotProduct(between));
@@ -420,6 +441,17 @@ fn processPhysics(balls: []Ball, platforms: []Platform) void {
                     a.spin = a.spin.scale(0.5);
                     b.spin = b.spin.scale(0.5);
                     rl.playSound(CLICK);
+                }
+            }
+        }
+
+        // holes
+        for (balls) |*ball| {
+            if (ball.state != .alive) continue;
+            for (holes) |hole| {
+                if (rl.checkCollisionPointCircle(ball.pos, hole.pos, (hole.radius - ball.radius))) {
+                    ball.state = .sunk;
+                    rl.playSound(SUNK);
                 }
             }
         }
