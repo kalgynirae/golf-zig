@@ -12,6 +12,11 @@ const CURSOR_SPACING: f32 = 12;
 const WIDTH: i32 = 800;
 const HEIGHT: i32 = 600;
 
+const BallState = enum {
+    alive,
+    dead,
+};
+
 const Ball = struct {
     const Self = @This();
 
@@ -21,15 +26,17 @@ const Ball = struct {
     spin: Vector2,
 
     cursors: BoundedArray(Cursor, 8),
+    state: BallState,
 
     fn init(x: f32, y: f32) Self {
         return Self{
             .pos = Vector2.init(x, y),
             .radius = CURSOR_SPACING,
             .velocity = Vector2.zero(),
-            .spin = Vector2.init(10, 0),
+            .spin = Vector2.zero(),
 
             .cursors = BoundedArray(Cursor, 8).init(0) catch unreachable,
+            .state = .alive,
         };
     }
 
@@ -42,7 +49,7 @@ const Ball = struct {
         if (self.cursors.len > 0) {
             const cursor = self.cursors.orderedRemove(0);
             const delta = cursor.angle.normalize().scale(@floatFromInt(strength));
-            self.velocity = self.velocity.add(delta);
+            self.velocity = self.velocity.scale(0.2).add(delta);
         }
     }
 };
@@ -239,7 +246,7 @@ pub fn main() !void {
                 }
 
                 // -- PHYSICS ----------------------------
-                processPhysics(state.balls.slice());
+                processPhysics(state.balls.slice(), state.platforms.slice());
 
                 // Point cursors at mouse
                 for (state.balls.slice()) |*ball| {
@@ -258,16 +265,16 @@ pub fn main() !void {
             defer camera.end();
 
             //platforms
-            // for (state.platforms.slice()) |platform| {
-            //     rl.drawRectangleRec(platform.rec, rl.Color.init(30, 80, 95, 255));
-            // }
+            for (state.platforms.slice()) |platform| {
+                rl.drawRectangleRec(platform.rec, rl.Color.init(30, 80, 95, 255));
+            }
             // holes
             for (state.holes.slice()) |hole| {
                 rl.drawCircleV(hole.pos, hole.radius, rl.Color.init(0, 60, 10, 255));
             }
             // balls
             for (state.balls.slice()) |ball| {
-                rl.drawCircleV(ball.pos, ball.radius, rl.Color.blue);
+                rl.drawCircleV(ball.pos, ball.radius, if (ball.state == .alive) rl.Color.blue else rl.Color.gray);
                 rl.drawLineV(ball.pos, ball.pos.add(ball.velocity.scale(5)), rl.Color.purple);
                 rl.drawLineV(ball.pos, ball.pos.add(ball.spin.scale(5)), rl.Color.sky_blue);
             }
@@ -313,21 +320,46 @@ pub fn main() !void {
     }
 }
 
-fn processPhysics(balls: []Ball) void {
+fn processPhysics(balls: []Ball, platforms: []Platform) void {
     const STEPS = 1;
     const SCALE: f32 = 1.0 / @as(f32, @floatFromInt(STEPS));
-    const MAX_SPEED: f32 = 20.0 / @as(f32, @floatFromInt(STEPS));
+    const MAX_SPEED: f32 = 25.0 / @as(f32, @floatFromInt(STEPS));
 
     for (0..STEPS) |_| {
         for (balls) |*ball| {
-            if (ball.velocity.length() < 0.5) {
+            if (ball.velocity.length() < 0.5 and ball.spin.length() < 0.5) {
                 ball.spin = Vector2.zero();
                 ball.velocity = Vector2.zero();
                 continue;
             }
 
-            // position
-            ball.pos = ball.pos.add(ball.velocity.scale(SCALE).clampValue(0, MAX_SPEED));
+            // platforms
+            platformcheck: {
+                for (platforms) |platform| {
+                    if (rl.checkCollisionPointRec(ball.pos, platform.rec)) {
+                        ball.state = .alive;
+                        break :platformcheck;
+                    }
+                }
+                ball.state = .dead;
+                continue;
+            }
+            const delta = ball.velocity.scale(SCALE).clampValue(0, MAX_SPEED);
+            const reflection = reflect: {
+                const NORMALS: [4]Vector2 = .{ Vector2.zero(), Vector2.init(1, 0), Vector2.init(0, 1), Vector2.init(1, 1) };
+                for (NORMALS) |normal| {
+                    const reflected = delta.reflect(normal);
+                    const tentative_pos = ball.pos.add(reflected);
+                    for (platforms) |platform| {
+                        if (rl.checkCollisionPointRec(tentative_pos, platform.rec)) {
+                            break :reflect normal;
+                        }
+                    }
+                }
+                break :reflect Vector2.zero();
+            };
+            ball.pos = ball.pos.add(delta.reflect(reflection));
+            ball.velocity = ball.velocity.reflect(reflection);
 
             // spin
             // reduce in perpendicular direction
@@ -337,15 +369,41 @@ fn processPhysics(balls: []Ball) void {
             // rl.drawLineEx(ball.pos, ball.pos.add(parallel_component), 5, rl.Color.red);
             const perpendicular_spin = ball.spin.subtract(parallel_spin);
             // rl.drawLineEx(ball.pos, ball.pos.add(perpendicular_component.scale(10)), 5, rl.Color.yellow);
-            ball.spin = ball.spin.subtract(perpendicular_spin.scale(0.2).scale(SCALE));
-            // increase in parallel direction
+            ball.spin = ball.spin.subtract(perpendicular_spin.scale(0.1).scale(SCALE));
+
+            // normalize toward velocity in parallel direction
             const velocity_spin_diff = ball.velocity.length() - parallel_spin_len;
-            ball.spin = ball.spin.add(velocity_dir.scale(velocity_spin_diff).scale(0.2).scale(SCALE));
+            if (velocity_spin_diff > 0) {
+                ball.spin = ball.spin.add(velocity_dir.scale(velocity_spin_diff).scale(0.2).scale(SCALE));
+            } else {
+                // backward spin decreases faster
+                ball.spin = ball.spin.add(velocity_dir.scale(velocity_spin_diff).scale(0.3).scale(SCALE));
+            }
+
+            // spin adjusts velocity
+            ball.velocity = ball.velocity.add(ball.spin.subtract(ball.velocity).scale(0.01));
 
             // friction
             // parallel spin reduces friction
             const friction = 0.08 - 0.05 * (parallel_spin_len / ball.velocity.length());
+            ball.spin = ball.spin.scale(1.0 - friction).scale(SCALE);
             ball.velocity = ball.velocity.scale(1.0 - friction).scale(SCALE);
+        }
+
+        // other balls
+        for (balls[0..(balls.len - 1)], 0..) |*a, ai| {
+            for (balls[(ai + 1)..balls.len]) |*b| {
+                if (rl.checkCollisionCircles(a.pos, a.radius, b.pos, b.radius)) {
+                    const between = a.pos.subtract(b.pos).normalize();
+                    const a_parallel_vel = between.scale(a.velocity.dotProduct(between));
+                    const b_parallel_vel = between.scale(b.velocity.dotProduct(between));
+                    // TODO: collision
+                    a.velocity = a.velocity.subtract(a_parallel_vel).add(b_parallel_vel);
+                    b.velocity = b.velocity.add(a_parallel_vel).subtract(b_parallel_vel);
+                    a.spin = a.spin.scale(0.5);
+                    b.spin = b.spin.scale(0.5);
+                }
+            }
         }
     }
 }
@@ -391,13 +449,13 @@ fn getHitStrength() ?u32 {
         strength = 5;
     }
     if (rg.guiButton(rl.Rectangle.init(1 * (WIDTH / 4), HEIGHT - 50, WIDTH / 4, 50), "#221#") != 0) {
-        strength = 10;
+        strength = 15;
     }
     if (rg.guiButton(rl.Rectangle.init(2 * (WIDTH / 4), HEIGHT - 50, WIDTH / 4, 50), "#222#") != 0) {
-        strength = 30;
+        strength = 35;
     }
     if (rg.guiButton(rl.Rectangle.init(3 * (WIDTH / 4), HEIGHT - 50, WIDTH / 4, 50), "#223#") != 0) {
-        strength = 50;
+        strength = 80;
     }
     return strength;
 }
