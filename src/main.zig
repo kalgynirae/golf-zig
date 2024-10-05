@@ -77,11 +77,13 @@ const CursorState = enum {
 const Hole = struct {
     pos: Vector2,
     radius: f32,
+    ball_count: u32,
 
     fn init(x: f32, y: f32) Hole {
         return Hole{
             .pos = Vector2.init(x, y),
             .radius = 24,
+            .ball_count = 0,
         };
     }
 };
@@ -104,6 +106,7 @@ const GameMode = enum {
 const GameState = struct {
     const Self = @This();
 
+    levelnum: usize,
     mode: GameMode = .playing,
     next_mode: ?GameMode = null,
 
@@ -111,8 +114,9 @@ const GameState = struct {
     holes: BoundedArray(Hole, 16),
     platforms: BoundedArray(Platform, 32),
 
-    fn init() Self {
+    fn init(levelnum: usize) Self {
         return Self{
+            .levelnum = levelnum,
             .balls = BoundedArray(Ball, 16).init(0) catch unreachable,
             .holes = BoundedArray(Hole, 16).init(0) catch unreachable,
             .platforms = BoundedArray(Platform, 32).init(0) catch unreachable,
@@ -121,6 +125,7 @@ const GameState = struct {
 
     fn clone(self: Self) Self {
         return Self{
+            .levelnum = self.levelnum,
             .balls = self.balls,
             .holes = self.holes,
             .platforms = self.platforms,
@@ -176,21 +181,34 @@ pub fn main() !void {
     };
 
     main: while (!rl.windowShouldClose()) {
-        rl.updateMusicStream(music);
-
         if (state.mode != last_mode) {
             std.debug.print("\x1b[1;36mMode changed: {}\x1b[0m\n", .{state.mode});
             last_mode = state.mode;
         }
-        rl.beginDrawing();
-        defer rl.endDrawing();
-
-        rl.clearBackground(rl.Color.black);
 
         const input = getInput();
         if (input.quit) {
             break :main;
         }
+
+        if (input.level) |levelnum| {
+            state = switch (levelnum) {
+                1 => level1(),
+                2 => level2(),
+                else => |v| lvl: {
+                    std.debug.print("\x1b[1;31mUnhandled level number: {}\x1b[0m\n", .{v});
+                    break :lvl level1();
+                },
+            };
+            pastStates.clearRetainingCapacity();
+            futureStates.clearRetainingCapacity();
+        }
+
+        rl.updateMusicStream(music);
+        rl.beginDrawing();
+        defer rl.endDrawing();
+
+        rl.clearBackground(rl.Color.black);
 
         if (state.next_mode) |mode| {
             state.mode = mode;
@@ -352,6 +370,13 @@ pub fn main() !void {
         rl.drawCircle(rl.getMouseX(), rl.getMouseY(), 8, rl.Color.gold);
 
         rl.drawText("Golf!", 710, 10, 32, rl.Color.light_gray);
+        rl.drawText(
+            std.fmt.allocPrintZ(allocator, "Level: {}", .{state.levelnum}) catch unreachable,
+            710,
+            42,
+            16,
+            rl.Color.light_gray,
+        );
 
         strength = null;
         if (!potentially_adding_cursor and !any_aiming_cursors) {
@@ -373,7 +398,6 @@ fn processPhysics(balls: []Ball, holes: []Hole, platforms: []Platform) void {
             if (ball.velocity.length() < 0.5 and ball.spin.length() < 0.5) {
                 ball.spin = Vector2.zero();
                 ball.velocity = Vector2.zero();
-                continue;
             }
 
             // platforms
@@ -387,6 +411,12 @@ fn processPhysics(balls: []Ball, holes: []Hole, platforms: []Platform) void {
                 ball.state = .dead;
                 continue;
             }
+
+            if (ball.velocity.equals(Vector2.zero()) == 1) {
+                continue;
+            }
+
+            // movement & collisions
             const delta = ball.velocity.scale(SCALE).clampValue(0, MAX_SPEED);
             const reflection = reflect: {
                 const NORMALS: [4]Vector2 = .{ Vector2.zero(), Vector2.init(1, 0), Vector2.init(0, 1), Vector2.init(1, 1) };
@@ -457,9 +487,10 @@ fn processPhysics(balls: []Ball, holes: []Hole, platforms: []Platform) void {
         // holes
         for (balls) |*ball| {
             if (ball.state != .alive) continue;
-            for (holes) |hole| {
+            for (holes) |*hole| {
                 if (rl.checkCollisionPointCircle(ball.pos, hole.pos, (hole.radius - (ball.radius / 2)))) {
                     ball.state = .sunk;
+                    hole.ball_count += 1;
                     rl.playSound(SUNK);
                 }
             }
@@ -476,6 +507,7 @@ const Input = struct {
     primary: bool = false,
     secondary: bool = false,
     shift: bool = false,
+    level: ?usize = null,
 };
 
 fn getInput() Input {
@@ -503,6 +535,38 @@ fn getInput() Input {
     if (rl.isKeyPressed(.key_backspace) or rl.isMouseButtonPressed(.mouse_button_right)) {
         input.secondary = true;
     }
+
+    if (rl.isKeyPressed(.key_one)) {
+        input.level = 1;
+    }
+    if (rl.isKeyPressed(.key_two)) {
+        input.level = 2;
+    }
+    if (rl.isKeyPressed(.key_three)) {
+        input.level = 3;
+    }
+    if (rl.isKeyPressed(.key_four)) {
+        input.level = 4;
+    }
+    if (rl.isKeyPressed(.key_five)) {
+        input.level = 5;
+    }
+    if (rl.isKeyPressed(.key_six)) {
+        input.level = 6;
+    }
+    if (rl.isKeyPressed(.key_seven)) {
+        input.level = 7;
+    }
+    if (rl.isKeyPressed(.key_eight)) {
+        input.level = 8;
+    }
+    if (rl.isKeyPressed(.key_nine)) {
+        input.level = 9;
+    }
+    if (rl.isKeyPressed(.key_zero)) {
+        input.level = 10;
+    }
+
     return input;
 }
 
@@ -524,11 +588,24 @@ fn getHitStrength() ?u32 {
 }
 
 fn level1() GameState {
-    var state = GameState.init();
+    var state = GameState.init(1);
     state.balls.appendAssumeCapacity(Ball.init(50, 50));
     state.balls.appendAssumeCapacity(Ball.init(500, 100));
     state.holes.appendAssumeCapacity(Hole.init(600, 400));
     state.platforms.appendAssumeCapacity(Platform.init(20, 20, 460, 560));
     state.platforms.appendAssumeCapacity(Platform.init(460, 40, 200, 500));
+    return state;
+}
+
+fn level2() GameState {
+    var state = GameState.init(2);
+    state.platforms.appendAssumeCapacity(Platform.init(20, 50, 180, 500));
+    state.platforms.appendAssumeCapacity(Platform.init(200, 250, 400, 100));
+    state.platforms.appendAssumeCapacity(Platform.init(600, 50, 180, 500));
+
+    state.holes.appendAssumeCapacity(Hole.init(710, 500));
+
+    state.balls.appendAssumeCapacity(Ball.init(90, 100));
+
     return state;
 }
