@@ -8,6 +8,8 @@ const Vector2 = rl.Vector2;
 
 const rg = @import("raygui");
 
+const lighting = @import("lighting.zig");
+
 const CURSOR_SPACING: f32 = 12;
 const WIDTH: i32 = 800;
 const HEIGHT: i32 = 600;
@@ -185,7 +187,11 @@ pub fn main() !void {
 
     const music = rl.loadMusicStream("assets/placeholder-music.ogg");
     rl.setMusicVolume(music, 0.4);
-    rl.playMusicStream(music);
+    //rl.playMusicStream(music);
+
+    // raylib needs to be init'd before initing the lighting system
+    var lighting_obj = lighting.Lighting.init(WIDTH, HEIGHT);
+    defer lighting_obj.unload();
 
     rl.setTargetFPS(60);
 
@@ -408,6 +414,10 @@ pub fn main() !void {
                     .sunk => {},
                 }
             }
+
+            lighting_obj.update();
+            lighting_obj.draw(rl.getMousePosition());
+
             // cursors
             for (state.balls.slice()) |ball| {
                 for (ball.cursors.slice()) |cursor| {
