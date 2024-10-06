@@ -123,6 +123,7 @@ const GameState = struct {
     levelnum: usize,
     mode: GameMode = .playing,
     next_mode: ?GameMode = null,
+    shots: u32 = 0,
 
     balls: BoundedArray(Ball, 16),
     holes: BoundedArray(Hole, 16),
@@ -140,6 +141,7 @@ const GameState = struct {
     fn clone(self: Self) Self {
         return Self{
             .levelnum = self.levelnum,
+            .shots = self.shots,
             .balls = self.balls,
             .holes = self.holes,
             .platforms = self.platforms,
@@ -291,6 +293,7 @@ pub fn main() !void {
                     for (state.balls.slice()) |*ball| {
                         ball.hit(s);
                     }
+                    state.shots += 1;
                 }
                 if (input.primary) {
                     if (potentially_adding_cursor) {
@@ -353,14 +356,51 @@ pub fn main() !void {
                         rl.drawCircleV(hole.pos, hole.radius, rl.Color.init(0, 30, 0, 255));
                     },
                 }
+                rl.drawText(
+                    std.fmt.allocPrintZ(allocator, "{}", .{hole.remaining_balls}) catch unreachable,
+                    @intFromFloat(hole.pos.x - 4),
+                    @intFromFloat(hole.pos.y - 2),
+                    32,
+                    rl.Color.white,
+                );
             }
             // balls
             for (state.balls.slice()) |ball| {
                 switch (ball.state) {
                     .alive => {
                         rl.drawCircleV(ball.pos, ball.radius, rl.Color.blue);
-                        rl.drawLineV(ball.pos, ball.pos.add(ball.velocity.scale(5)), rl.Color.purple);
-                        rl.drawLineV(ball.pos, ball.pos.add(ball.spin.scale(5)), rl.Color.sky_blue);
+                        rl.drawCircle(
+                            @intFromFloat(ball.pos.x - 4),
+                            @intFromFloat(ball.pos.y - 2),
+                            2,
+                            rl.Color.black,
+                        );
+                        rl.drawCircle(
+                            @intFromFloat(ball.pos.x + 4),
+                            @intFromFloat(ball.pos.y - 2),
+                            2,
+                            rl.Color.black,
+                        );
+                        if (ball.velocity.equals(Vector2.zero()) == 1) {
+                            rl.drawLine(
+                                @intFromFloat(ball.pos.x - 3),
+                                @intFromFloat(ball.pos.y + 5),
+                                @intFromFloat(ball.pos.x + 3),
+                                @intFromFloat(ball.pos.y + 5),
+                                rl.Color.black,
+                            );
+                        } else {
+                            rl.drawEllipse(
+                                @intFromFloat(ball.pos.x),
+                                @intFromFloat(ball.pos.y + 5),
+                                4,
+                                1 + @min(5, @round(ball.velocity.length() * 1.5)),
+                                rl.Color.black,
+                            );
+                        }
+                        // DEBUGGING:
+                        // rl.drawLineV(ball.pos, ball.pos.add(ball.velocity.scale(5)), rl.Color.purple);
+                        // rl.drawLineV(ball.pos, ball.pos.add(ball.spin.scale(5)), rl.Color.sky_blue);
                     },
                     .dead => {
                         rl.drawCircleV(ball.pos, ball.radius, rl.Color.dark_gray);
@@ -410,9 +450,16 @@ pub fn main() !void {
             rl.Color.light_gray,
         );
         rl.drawText(
-            std.fmt.allocPrintZ(allocator, "{} FPS", .{rl.getFPS()}) catch unreachable,
+            std.fmt.allocPrintZ(allocator, "Shots: {}", .{state.shots}) catch unreachable,
             710,
             58,
+            16,
+            rl.Color.light_gray,
+        );
+        rl.drawText(
+            std.fmt.allocPrintZ(allocator, "{} FPS", .{rl.getFPS()}) catch unreachable,
+            720,
+            580,
             16,
             rl.Color.light_gray,
         );
