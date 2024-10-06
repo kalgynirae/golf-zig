@@ -34,7 +34,7 @@ const ShadowVolume = struct {
     }
 
     pub fn fromPoints(lightPos: Vector2, radius: f32, sp: Vector2, ep: Vector2) ShadowVolume {
-        const falloff = radius * 2.0;
+        const falloff = radius * 100.0;
         const shadowDir: Vector2 = sp.subtract(lightPos).normalize();
         const shadowProj: Vector2 = sp.add(shadowDir.scale(falloff));
 
@@ -88,7 +88,7 @@ const Light = struct {
         rl.gl.rlSetBlendFactors(rl.gl.rl_src_alpha, rl.gl.rl_src_alpha, rl.gl.rl_min);
         rl.gl.rlSetBlendMode(@intFromEnum(rl.gl.rlBlendMode.rl_blend_custom));
 
-        rl.drawCircleGradient(@intFromFloat(self.pos.x), @intFromFloat(self.pos.y), self.radius, rl.colorAlpha(rl.Color.white, 0.0), rl.Color.white);
+        rl.drawCircleGradient(@intFromFloat(self.pos.x), @intFromFloat(self.pos.y), self.radius, rl.colorAlpha(self.color, 0.0), self.color);
 
         rl.gl.rlDrawRenderBatchActive();
 
@@ -100,7 +100,7 @@ const Light = struct {
             const points = [4]Vector2{
                 shadow.v1, shadow.v2, shadow.v3, shadow.v4,
             };
-            rl.drawTriangleFan(&points, rl.Color.white);
+            rl.drawTriangleFan(&points, self.color);
         }
 
         rl.gl.rlDrawRenderBatchActive();
@@ -116,42 +116,39 @@ const Light = struct {
 
         self.shadows = BoundedArray(ShadowVolume, 30).init(0) catch unreachable;
 
-        for (state.platforms.slice()) |platform| {
+        for (state.platforms.slice()) |_| {
             // top side of platform
-            var shadowPoint = Vector2.init(platform.rec.x, platform.rec.y);
-            var edgePoint = Vector2.init(platform.rec.x + platform.rec.width, platform.rec.y);
-            if (self.pos.y < edgePoint.y) {
-                self.shadows.appendAssumeCapacity(ShadowVolume.fromPoints(self.pos, self.radius, shadowPoint, edgePoint));
-            }
+            // var shadowPoint = Vector2.init(platform.rec.x, platform.rec.y);
+            // var edgePoint = Vector2.init(platform.rec.x + platform.rec.width, platform.rec.y);
+            // if (self.pos.y > edgePoint.y) {
+            //     self.shadows.appendAssumeCapacity(ShadowVolume.fromPoints(self.pos, self.radius, shadowPoint, edgePoint));
+            // }
 
-            // right side of platform
-            shadowPoint = edgePoint;
-            edgePoint.y += platform.rec.height;
-            if (self.pos.x > edgePoint.x) {
-                self.shadows.appendAssumeCapacity(ShadowVolume.fromPoints(self.pos, self.radius, shadowPoint, edgePoint));
-            }
+            // // right side of platform
+            // shadowPoint = edgePoint;
+            // edgePoint.y += platform.rec.height;
+            // if (self.pos.x < edgePoint.x) {
+            //     self.shadows.appendAssumeCapacity(ShadowVolume.fromPoints(self.pos, self.radius, shadowPoint, edgePoint));
+            // }
 
-            // Bottom
-            shadowPoint = edgePoint;
-            edgePoint.x -= platform.rec.width;
-            if (self.pos.y > edgePoint.y) {
-                self.shadows.appendAssumeCapacity(ShadowVolume.fromPoints(self.pos, self.radius, shadowPoint, edgePoint));
-            }
+            // // Bottom
+            // shadowPoint = edgePoint;
+            // edgePoint.x -= platform.rec.width;
+            // if (self.pos.y < edgePoint.y) {
+            //     self.shadows.appendAssumeCapacity(ShadowVolume.fromPoints(self.pos, self.radius, shadowPoint, edgePoint));
+            // }
 
-            // Left
-            shadowPoint = edgePoint;
-            edgePoint.y -= platform.rec.height;
-            if (self.pos.x < edgePoint.x) {
-                self.shadows.appendAssumeCapacity(ShadowVolume.fromPoints(self.pos, self.radius, shadowPoint, edgePoint));
-            }
+            // // Left
+            // shadowPoint = edgePoint;
+            // edgePoint.y -= platform.rec.height;
+            // if (self.pos.x > edgePoint.x) {
+            //     self.shadows.appendAssumeCapacity(ShadowVolume.fromPoints(self.pos, self.radius, shadowPoint, edgePoint));
+            // }
 
-            //const platformShadow = ShadowVolume.init(Vector2.init(platform.rec.x, platform.rec.y), Vector2.init(platform.rec.x, platform.rec.y + platform.rec.height), Vector2.init(platform.rec.x + platform.rec.width, platform.rec.y + platform.rec.height), Vector2.init(platform.rec.x + platform.rec.width, platform.rec.y));
-            //self.shadows.appendAssumeCapacity(platformShadow);
             self.draw();
         }
 
         self.needsLightingUpdate = false;
-        std.debug.print("Light at {} has {} shadows\n", .{ self.pos, self.shadows.len });
         return true;
     }
 
@@ -319,10 +316,7 @@ pub fn main() !void {
 
     var pastStates = ArrayList(GameState).init(allocator);
     var futureStates = ArrayList(GameState).init(allocator);
-    var state = level2();
-    for (state.balls.slice()) |*ball| {
-        _ = ball.light.update(&state);
-    }
+    var state = level1();
 
     var last_mode: GameMode = state.mode;
     var hovered_ball: ?usize = null;
@@ -381,10 +375,6 @@ pub fn main() !void {
         }
 
         rl.updateMusicStream(music);
-        rl.beginDrawing();
-        defer rl.endDrawing();
-
-        rl.clearBackground(rl.Color.black);
 
         if (state.next_mode) |mode| {
             state.mode = mode;
@@ -519,6 +509,10 @@ pub fn main() !void {
         }
 
         // -- DRAWING ----------------------------
+        rl.beginDrawing();
+        defer rl.endDrawing();
+
+        rl.clearBackground(rl.Color.black);
         {
             camera.begin();
             defer camera.end();
