@@ -34,7 +34,7 @@ const ShadowVolume = struct {
     }
 
     pub fn fromPoints(lightPos: Vector2, radius: f32, sp: Vector2, ep: Vector2) ShadowVolume {
-        const falloff = radius * 2.0;
+        const falloff = radius * 100.0;
         const shadowDir: Vector2 = sp.subtract(lightPos).normalize();
         const shadowProj: Vector2 = sp.add(shadowDir.scale(falloff));
 
@@ -87,23 +87,27 @@ const Light = struct {
 
         rl.gl.rlSetBlendFactors(rl.gl.rl_src_alpha, rl.gl.rl_src_alpha, rl.gl.rl_min);
         rl.gl.rlSetBlendMode(@intFromEnum(rl.gl.rlBlendMode.rl_blend_custom));
+        rl.beginBlendMode(rl.BlendMode.blend_custom);
 
-        rl.drawCircleGradient(@intFromFloat(self.pos.x), @intFromFloat(self.pos.y), self.radius, rl.colorAlpha(rl.Color.white, 0.0), rl.Color.white);
+        rl.drawCircleGradient(@intFromFloat(self.pos.x), @intFromFloat(self.pos.y), self.radius, rl.colorAlpha(self.color, 0.0), self.color);
 
         rl.gl.rlDrawRenderBatchActive();
+        rl.endBlendMode();
 
         rl.gl.rlSetBlendMode(@intFromEnum(rl.gl.rlBlendMode.rl_blend_alpha));
         rl.gl.rlSetBlendFactors(rl.gl.rl_src_alpha, rl.gl.rl_blend_src_alpha, rl.gl.rl_max);
         rl.gl.rlSetBlendMode(@intFromEnum(rl.gl.rlBlendMode.rl_blend_custom));
+        rl.beginBlendMode(rl.BlendMode.blend_custom);
 
         for (self.shadows.slice()) |shadow| {
             const points = [4]Vector2{
                 shadow.v1, shadow.v2, shadow.v3, shadow.v4,
             };
-            rl.drawTriangleFan(&points, rl.Color.white);
+            rl.drawTriangleFan(&points, self.color);
         }
-
         rl.gl.rlDrawRenderBatchActive();
+
+        rl.endBlendMode();
 
         rl.gl.rlSetBlendMode(@intFromEnum(rl.gl.rlBlendMode.rl_blend_alpha));
         rl.endTextureMode();
@@ -116,42 +120,39 @@ const Light = struct {
 
         self.shadows = BoundedArray(ShadowVolume, 30).init(0) catch unreachable;
 
-        for (state.platforms.slice()) |platform| {
+        for (state.platforms.slice()) |_| {
             // top side of platform
-            var shadowPoint = Vector2.init(platform.rec.x, platform.rec.y);
-            var edgePoint = Vector2.init(platform.rec.x + platform.rec.width, platform.rec.y);
-            if (self.pos.y < edgePoint.y) {
-                self.shadows.appendAssumeCapacity(ShadowVolume.fromPoints(self.pos, self.radius, shadowPoint, edgePoint));
-            }
+            // var shadowPoint = Vector2.init(platform.rec.x, platform.rec.y);
+            // var edgePoint = Vector2.init(platform.rec.x + platform.rec.width, platform.rec.y);
+            // if (self.pos.y > edgePoint.y) {
+            //     self.shadows.appendAssumeCapacity(ShadowVolume.fromPoints(self.pos, self.radius, shadowPoint, edgePoint));
+            // }
 
-            // right side of platform
-            shadowPoint = edgePoint;
-            edgePoint.y += platform.rec.height;
-            if (self.pos.x > edgePoint.x) {
-                self.shadows.appendAssumeCapacity(ShadowVolume.fromPoints(self.pos, self.radius, shadowPoint, edgePoint));
-            }
+            // // right side of platform
+            // shadowPoint = edgePoint;
+            // edgePoint.y += platform.rec.height;
+            // if (self.pos.x < edgePoint.x) {
+            //     self.shadows.appendAssumeCapacity(ShadowVolume.fromPoints(self.pos, self.radius, shadowPoint, edgePoint));
+            // }
 
-            // Bottom
-            shadowPoint = edgePoint;
-            edgePoint.x -= platform.rec.width;
-            if (self.pos.y > edgePoint.y) {
-                self.shadows.appendAssumeCapacity(ShadowVolume.fromPoints(self.pos, self.radius, shadowPoint, edgePoint));
-            }
+            // // Bottom
+            // shadowPoint = edgePoint;
+            // edgePoint.x -= platform.rec.width;
+            // if (self.pos.y < edgePoint.y) {
+            //     self.shadows.appendAssumeCapacity(ShadowVolume.fromPoints(self.pos, self.radius, shadowPoint, edgePoint));
+            // }
 
-            // Left
-            shadowPoint = edgePoint;
-            edgePoint.y -= platform.rec.height;
-            if (self.pos.x < edgePoint.x) {
-                self.shadows.appendAssumeCapacity(ShadowVolume.fromPoints(self.pos, self.radius, shadowPoint, edgePoint));
-            }
+            // // Left
+            // shadowPoint = edgePoint;
+            // edgePoint.y -= platform.rec.height;
+            // if (self.pos.x > edgePoint.x) {
+            //     self.shadows.appendAssumeCapacity(ShadowVolume.fromPoints(self.pos, self.radius, shadowPoint, edgePoint));
+            // }
 
-            //const platformShadow = ShadowVolume.init(Vector2.init(platform.rec.x, platform.rec.y), Vector2.init(platform.rec.x, platform.rec.y + platform.rec.height), Vector2.init(platform.rec.x + platform.rec.width, platform.rec.y + platform.rec.height), Vector2.init(platform.rec.x + platform.rec.width, platform.rec.y));
-            //self.shadows.appendAssumeCapacity(platformShadow);
             self.draw();
         }
 
         self.needsLightingUpdate = false;
-        std.debug.print("Light at {} has {} shadows\n", .{ self.pos, self.shadows.len });
         return true;
     }
 
@@ -218,6 +219,7 @@ const Ball = struct {
         self.clearCursors();
         self.state = .sunk;
         rl.playSound(SUNK);
+        self.light.active = false;
     }
 };
 
@@ -241,16 +243,35 @@ const CursorState = enum {
 };
 
 const Hole = struct {
+    const Self = @This();
+
     pos: Vector2,
     radius: f32,
     remaining_balls: u32,
+
+    light: Light,
 
     fn init(x: f32, y: f32, needed_balls: u32) Hole {
         return Hole{
             .pos = Vector2.init(x, y),
             .radius = 24,
             .remaining_balls = needed_balls,
+            .light = Light.init(Vector2.init(x, y), rl.Color.green, true, 70.0, CURSOR_SPACING * 10.0),
         };
+    }
+
+    fn getColor(self: Self) rl.Color {
+        switch (self.remaining_balls) {
+            0 => {
+                return rl.Color.init(35, 65, 75, 255);
+            },
+            1 => {
+                return rl.Color.init(0, 60, 20, 255);
+            },
+            else => {
+                return rl.Color.init(0, 30, 0, 255);
+            },
+        }
     }
 };
 
@@ -319,10 +340,7 @@ pub fn main() !void {
 
     var pastStates = ArrayList(GameState).init(allocator);
     var futureStates = ArrayList(GameState).init(allocator);
-    var state = level2();
-    for (state.balls.slice()) |*ball| {
-        _ = ball.light.update(&state);
-    }
+    var state = level1();
 
     var last_mode: GameMode = state.mode;
     var hovered_ball: ?usize = null;
@@ -381,10 +399,6 @@ pub fn main() !void {
         }
 
         rl.updateMusicStream(music);
-        rl.beginDrawing();
-        defer rl.endDrawing();
-
-        rl.clearBackground(rl.Color.black);
 
         if (state.next_mode) |mode| {
             state.mode = mode;
@@ -480,6 +494,11 @@ pub fn main() !void {
                         dirtyLighting = true;
                     }
                 }
+                for (state.holes.slice()) |*hole| {
+                    if (hole.light.update(&state)) {
+                        dirtyLighting = true;
+                    }
+                }
 
                 if (dirtyLighting) {
                     // regenerate the global lightmap
@@ -489,13 +508,19 @@ pub fn main() !void {
 
                     rl.gl.rlSetBlendFactors(rl.gl.rl_src_alpha, rl.gl.rl_src_alpha, rl.gl.rl_min);
                     rl.gl.rlSetBlendMode(@intFromEnum(rl.gl.rlBlendMode.rl_blend_custom));
+                    rl.beginBlendMode(rl.BlendMode.blend_custom);
 
+                    for (state.holes.slice()) |hole| {
+                        rl.drawTextureRec(hole.light.lightMask.texture, rl.Rectangle.init(0, 0, @floatFromInt(WIDTH), @floatFromInt(HEIGHT)), Vector2.zero(), hole.light.color);
+                    }
                     for (state.balls.slice()) |ball| {
-                        rl.drawTextureRec(ball.light.lightMask.texture, rl.Rectangle.init(0, 0, @floatFromInt(WIDTH), @floatFromInt(HEIGHT)), Vector2.zero(), rl.Color.white);
+                        rl.drawTextureRec(ball.light.lightMask.texture, rl.Rectangle.init(0, 0, @floatFromInt(WIDTH), @floatFromInt(HEIGHT)), Vector2.zero(), ball.light.color);
                     }
                     rl.gl.rlDrawRenderBatchActive();
 
                     rl.gl.rlSetBlendMode(@intFromEnum(rl.gl.rlBlendMode.rl_blend_alpha));
+
+                    rl.endBlendMode();
 
                     rl.endTextureMode();
                 }
@@ -519,6 +544,10 @@ pub fn main() !void {
         }
 
         // -- DRAWING ----------------------------
+        rl.beginDrawing();
+        defer rl.endDrawing();
+
+        rl.clearBackground(rl.Color.black);
         {
             camera.begin();
             defer camera.end();
@@ -529,17 +558,8 @@ pub fn main() !void {
             }
             // holes
             for (state.holes.slice()) |hole| {
-                switch (hole.remaining_balls) {
-                    0 => {
-                        rl.drawCircleV(hole.pos, hole.radius, rl.Color.init(35, 65, 75, 255));
-                    },
-                    1 => {
-                        rl.drawCircleV(hole.pos, hole.radius, rl.Color.init(0, 60, 20, 255));
-                    },
-                    else => {
-                        rl.drawCircleV(hole.pos, hole.radius, rl.Color.init(0, 30, 0, 255));
-                    },
-                }
+                rl.drawCircleV(hole.pos, hole.radius, hole.getColor());
+
                 rl.drawText(
                     std.fmt.allocPrintZ(allocator, "{}", .{hole.remaining_balls}) catch unreachable,
                     @intFromFloat(hole.pos.x - 4),
@@ -769,6 +789,11 @@ fn processPhysics(balls: []Ball, holes: []Hole, platforms: []Platform) void {
                 if (rl.checkCollisionPointCircle(ball.pos, hole.pos, (hole.radius - (ball.radius / 2)))) {
                     ball.sink();
                     hole.remaining_balls -= 1;
+                    // make the hole a little brighter as more balls are sunk
+                    hole.light.intensity *= 1.25;
+                    if (hole.remaining_balls <= 0) {
+                        hole.light.active = false;
+                    }
                 }
             }
         }
