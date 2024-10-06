@@ -417,6 +417,13 @@ pub fn main() !void {
             16,
             rl.Color.light_gray,
         );
+        rl.drawText(
+            std.fmt.allocPrintZ(allocator, "{} FPS", .{rl.getFPS()}) catch unreachable,
+            710,
+            58,
+            16,
+            rl.Color.light_gray,
+        );
 
         strength = null;
         if (!potentially_adding_cursor and !any_aiming_cursors) {
