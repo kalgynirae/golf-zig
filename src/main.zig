@@ -192,6 +192,9 @@ pub fn main() !void {
     // raylib needs to be init'd before initing the lighting system
     var lighting_obj = lighting.Lighting.init(WIDTH, HEIGHT);
     defer lighting_obj.unload();
+    for (state.balls.slice(), 0..) |*ball, idx| {
+        lighting_obj.add_ball(idx, false, ball.pos, rl.Color.green);
+    }
 
     rl.setTargetFPS(60);
 
@@ -225,6 +228,10 @@ pub fn main() !void {
                     break :lvl level1();
                 },
             };
+            lighting_obj.clear_balls();
+            for (state.balls.slice(), 0..) |*ball, idx| {
+                lighting_obj.add_ball(idx, false, ball.pos, rl.Color.green);
+            }
             pastStates.clearRetainingCapacity();
             futureStates.clearRetainingCapacity();
         }
@@ -373,7 +380,7 @@ pub fn main() !void {
                 );
             }
             // balls
-            for (state.balls.slice()) |ball| {
+            for (state.balls.slice(), 0..) |ball, i| {
                 switch (ball.state) {
                     .alive => {
                         rl.drawCircleV(ball.pos, ball.radius, rl.Color.blue);
@@ -406,6 +413,7 @@ pub fn main() !void {
                                 rl.Color.black,
                             );
                         }
+                        lighting_obj.update_ball(i, false, ball.pos);
                         // DEBUGGING:
                         // rl.drawLineV(ball.pos, ball.pos.add(ball.velocity.scale(5)), rl.Color.purple);
                         // rl.drawLineV(ball.pos, ball.pos.add(ball.spin.scale(5)), rl.Color.sky_blue);
