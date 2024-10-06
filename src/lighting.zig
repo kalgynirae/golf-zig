@@ -5,6 +5,8 @@ const std = @import("std");
 const rl = @import("raylib");
 const rg = @import("raygui");
 
+const SHADER_FRAG_FILEPATH = "assets/shaders/lighting.frag.glsl";
+
 pub const Lighting = struct {
     const Self = @This();
 
@@ -13,16 +15,19 @@ pub const Lighting = struct {
     shaderModTime: i64,
     time: f32,
     timeLoc: i32,
-    cursorLoc: i32,
+    cursorPositionXLoc: i32,
+    cursorPositionYLoc: i32,
+    cursorPositionX: i32,
+    cursorPositionY: i32,
 
     pub fn init(width: i32, height: i32) Lighting {
-        const imBlank: rl.Image = rl.genImageColor(width, height, rl.colorAlpha(rl.Color.blank, 1.0));
+        const imBlank: rl.Image = rl.genImageColor(width, height, rl.Color.black);
         const texture: rl.Texture2D = rl.loadTextureFromImage(imBlank);
         rl.unloadImage(imBlank);
 
-        const shaderModTime = rl.getFileModTime("assets/shaders/cubes_panning.frag.glsl");
+        const shaderModTime = rl.getFileModTime(SHADER_FRAG_FILEPATH);
 
-        const shader = rl.loadShader("", "assets/shaders/cubes_panning.frag.glsl");
+        const shader = rl.loadShader("", SHADER_FRAG_FILEPATH);
 
         var lighting = Self{
             .texture = texture,
@@ -30,7 +35,10 @@ pub const Lighting = struct {
             .shaderModTime = shaderModTime,
             .timeLoc = 0,
             .time = 0.0,
-            .cursorLoc = 0,
+            .cursorPositionXLoc = 0,
+            .cursorPositionYLoc = 0,
+            .cursorPositionX = 0,
+            .cursorPositionY = 0,
         };
 
         lighting.populateLocations();
@@ -39,29 +47,35 @@ pub const Lighting = struct {
 
     fn populateLocations(self: *Self) void {
         self.timeLoc = rl.getShaderLocation(self.shader, "uTime");
-        self.cursorLoc = rl.getShaderLocation(self.shader, "uCursor");
+        self.cursorPositionXLoc = rl.getShaderLocation(self.shader, "uCursorPositionX");
+        self.cursorPositionYLoc = rl.getShaderLocation(self.shader, "uCursorPositionY");
     }
 
     pub fn update(self: *Self) void {
         const time: f32 = @floatCast(rl.getTime());
         self.time = time;
 
-        const shaderModTime = rl.getFileModTime("assets/shaders/cubes_panning.frag.glsl");
+        const shaderModTime = rl.getFileModTime(SHADER_FRAG_FILEPATH);
         if (self.shaderModTime != shaderModTime) {
             // hot reload shader
-            const newShader = rl.loadShader("", "assets/shaders/cubes_panning.frag.glsl");
-            if (newShader.id != rl.gl.rlGetShaderIdDefault()) {
+            const newShader = rl.loadShader("", SHADER_FRAG_FILEPATH);
+            if (rl.isShaderReady(newShader)) {
                 rl.unloadShader(self.shader);
                 self.shader = newShader;
                 self.populateLocations();
                 self.shaderModTime = shaderModTime;
             }
         }
+
+        self.cursorPositionX = rl.getMouseX();
+        self.cursorPositionY = rl.getMouseY();
     }
 
-    pub fn draw(self: *Self, cursorPos: rl.Vector2) void {
+    pub fn draw(self: *Self) void {
         rl.setShaderValue(self.shader, self.timeLoc, &self.time, rl.ShaderUniformDataType.shader_uniform_float);
-        rl.setShaderValue(self.shader, self.cursorLoc, &cursorPos, rl.ShaderUniformDataType.shader_uniform_vec2);
+        rl.setShaderValue(self.shader, self.cursorPositionXLoc, &self.cursorPositionX, rl.ShaderUniformDataType.shader_uniform_int);
+        rl.setShaderValue(self.shader, self.cursorPositionYLoc, &self.cursorPositionY, rl.ShaderUniformDataType.shader_uniform_int);
+
         rl.beginShaderMode(self.shader);
         rl.drawTexture(self.texture, 0, 0, rl.Color.white);
         rl.endShaderMode();

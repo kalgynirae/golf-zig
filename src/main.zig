@@ -266,6 +266,8 @@ pub fn main() !void {
                     }
                 }
 
+                lighting_obj.update();
+
                 // Update hovered cursor
                 hovered_ball = null;
                 const mousepos = rl.getMousePosition().transform(camera.getMatrix().invert());
@@ -415,8 +417,7 @@ pub fn main() !void {
                 }
             }
 
-            lighting_obj.update();
-            lighting_obj.draw(rl.getMousePosition());
+            lighting_obj.draw();
 
             // cursors
             for (state.balls.slice()) |ball| {
