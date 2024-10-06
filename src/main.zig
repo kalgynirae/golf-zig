@@ -18,6 +18,153 @@ const BallState = enum {
     sunk,
 };
 
+const ShadowVolume = struct {
+    v1: Vector2,
+    v2: Vector2,
+    v3: Vector2,
+    v4: Vector2,
+
+    pub fn init(v1: Vector2, v2: Vector2, v3: Vector2, v4: Vector2) ShadowVolume {
+        return ShadowVolume{
+            .v1 = v1,
+            .v2 = v2,
+            .v3 = v3,
+            .v4 = v4,
+        };
+    }
+
+    pub fn fromPoints(lightPos: Vector2, radius: f32, sp: Vector2, ep: Vector2) ShadowVolume {
+        const falloff = radius * 2.0;
+        const shadowDir: Vector2 = sp.subtract(lightPos).normalize();
+        const shadowProj: Vector2 = sp.add(shadowDir.scale(falloff));
+
+        const edgeDir: Vector2 = ep.subtract(lightPos).normalize();
+        const edgeProj: Vector2 = ep.add(edgeDir.scale(falloff));
+
+        return ShadowVolume{
+            .v1 = sp,
+            .v2 = ep,
+            .v3 = edgeProj,
+            .v4 = shadowProj,
+        };
+    }
+};
+
+const Light = struct {
+    const Self = @This();
+
+    pos: Vector2,
+    color: rl.Color,
+    active: bool,
+    intensity: f32,
+    radius: f32,
+    needsLightingUpdate: bool,
+    lightMask: rl.RenderTexture,
+    bounds: rl.Rectangle,
+    shadows: BoundedArray(ShadowVolume, 30),
+
+    pub fn init(pos: Vector2, color: rl.Color, active: bool, intensity: f32, radius: f32) Self {
+        const lightMask = rl.loadRenderTexture(WIDTH, HEIGHT);
+        const bounds = rl.Rectangle.init(pos.x - radius, pos.y - radius, pos.x + radius, pos.y + radius);
+
+        return Self{
+            .pos = pos,
+            .color = color,
+            .active = active,
+            .intensity = intensity,
+            .radius = radius,
+            .needsLightingUpdate = true,
+            .lightMask = lightMask,
+            .bounds = bounds,
+            .shadows = BoundedArray(ShadowVolume, 30).init(0) catch unreachable,
+        };
+    }
+
+    fn draw(self: *Self) void {
+        rl.beginTextureMode(self.lightMask);
+
+        rl.clearBackground(rl.Color.white);
+
+        rl.gl.rlSetBlendFactors(rl.gl.rl_src_alpha, rl.gl.rl_src_alpha, rl.gl.rl_min);
+        rl.gl.rlSetBlendMode(rl.gl.rlBlendMode.rl_blend_custom);
+
+        rl.drawCircleGradient(self.pos.x, self.pos.y, self.radius, rl.colorAlpha(self.color, 0.0), self.color);
+
+        rl.gl.rlDrawRenderBatchActive();
+
+        rl.gl.rlSetBlendMode(rl.gl.rlBlendMode.rl_blend_alpha);
+        rl.gl.rlSetBlendFactors(rl.gl.rl_src_alpha, rl.gl.rl_blend_src_alpha, rl.gl.rl_max);
+        rl.gl.rlSetBlendMode(rl.gl.rlBlendMode.rl_blend_custom);
+
+        for (self.shadows.slice()) |shadow| {
+            const points = [_]Vector2{
+                shadow.vertexUR, shadow.vertexUL, shadow.vertexLL, shadow.vertexLR,
+            };
+            rl.drawTriangleFan(points, rl.Color.white);
+        }
+
+        rl.gl.rlDrawRenderBatchActive();
+
+        rl.gl.rlSetBlendMode(rl.gl.rlBlendMode.rl_blend_alpha);
+
+        rl.endTextureMode(self.lightMask);
+    }
+
+    pub fn update(self: *Self, state: GameState) void {
+        if (!self.active) {
+            return;
+        }
+
+        self.shadows = BoundedArray(ShadowVolume, 30).init(0) catch unreachable;
+
+        for (state.platforms.slice()) |platform| {
+            // skip calculation if we're not inside of a platform
+            if (!rl.checkCollisionPointRec(self.pos, platform.rec)) {
+                continue;
+            }
+
+            // if a platform is outside of our light radius, skip it
+            if (!rl.checkCollisionRecs(self.bounds, platform.rec)) {
+                continue;
+            }
+
+            // top side of platform
+            var shadowPoint = Vector2(platform.rec.x, platform.rec.y);
+            var edgePoint = Vector2(platform.rec.x + platform.rec.width, platform.rec.y);
+            if (self.pos.y > edgePoint.y) {
+                self.shadows.appendAssumeCapacity(ShadowVolume.fromPoints(self.pos, self.radius, shadowPoint, edgePoint));
+            }
+
+            // right side of platform
+            shadowPoint = edgePoint;
+            edgePoint.y += platform.height;
+            if (self.pos.x < edgePoint.x) {
+                self.shadows.appendAssumeCapacity(ShadowVolume.fromPoints(self.pos, self.radius, shadowPoint, edgePoint));
+            }
+
+            // Bottom
+            shadowPoint = edgePoint;
+            edgePoint.x -= platform.width;
+            if (self.pos.y < edgePoint.y) {
+                self.shadows.appendAssumeCapacity(ShadowVolume.fromPoints(self.pos, self.radius, shadowPoint, edgePoint));
+            }
+
+            // Left
+            shadowPoint = edgePoint;
+            edgePoint -= platform.height;
+            if (self.post.x > edgePoint.x) {
+                self.shadows.appendAssumeCapacity(ShadowVolume.fromPoints(self.pos, self.radius, shadowPoint, edgePoint));
+            }
+
+            const platformShadow = ShadowVolume.init(Vector2(platform.x, platform.y), Vector2(platform.x, platform.y + platform.height), Vector2(platform.x + platform.width, platform.y + platform.height), Vector2(platform.x + platform.width, platform.y));
+            self.shadows.appendAssumeCapacity(platformShadow);
+            self.draw();
+        }
+
+        self.needsLightingUpdate = false;
+    }
+};
+
 const Ball = struct {
     const Self = @This();
 
@@ -25,6 +172,8 @@ const Ball = struct {
     radius: f32,
     velocity: Vector2,
     spin: Vector2,
+
+    light: Light,
 
     cursors: BoundedArray(Cursor, 8),
     state: BallState,
@@ -35,6 +184,8 @@ const Ball = struct {
             .radius = CURSOR_SPACING,
             .velocity = Vector2.zero(),
             .spin = Vector2.zero(),
+
+            .light = Light.init(Vector2.init(x, y), rl.Color.white, true, 5.0, CURSOR_SPACING * 2.0),
 
             .cursors = BoundedArray(Cursor, 8).init(0) catch unreachable,
             .state = .alive,
@@ -159,6 +310,12 @@ pub fn main() !void {
 
     const allocator = arena.allocator();
 
+    _ = rg.guiLoadIcons("assets/iconset.rgi", false);
+    _ = rg.guiSetIconScale(2);
+    rl.setConfigFlags(rl.ConfigFlags{ .vsync_hint = true });
+    rl.initWindow(WIDTH, HEIGHT, "Golf!");
+    defer rl.closeWindow();
+
     var pastStates = ArrayList(GameState).init(allocator);
     var futureStates = ArrayList(GameState).init(allocator);
     var state = level1();
@@ -169,12 +326,6 @@ pub fn main() !void {
     var any_set_cursors = false;
     var potentially_adding_cursor = false;
     var strength: ?u32 = null;
-
-    _ = rg.guiLoadIcons("assets/iconset.rgi", false);
-    _ = rg.guiSetIconScale(2);
-    rl.setConfigFlags(rl.ConfigFlags{ .vsync_hint = true });
-    rl.initWindow(WIDTH, HEIGHT, "Golf!");
-    defer rl.closeWindow();
 
     rl.initAudioDevice();
     defer rl.closeAudioDevice();
