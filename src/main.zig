@@ -114,6 +114,10 @@ const Light = struct {
     }
 
     pub fn update(self: *Self, state: *const GameState) bool {
+        if (!self.active and self.needsLightingUpdate) {
+            // this light has turned off
+            return true;
+        }
         if (!self.active or !self.needsLightingUpdate) {
             return false;
         }
@@ -121,6 +125,9 @@ const Light = struct {
         self.shadows = BoundedArray(ShadowVolume, 30).init(0) catch unreachable;
 
         for (state.platforms.slice()) |_| {
+            // this is supposed to be a shadow casting algo, but we need to invert the mesh of platforms to create empty space...
+            // or I can negate it once I understand it...
+
             // top side of platform
             // var shadowPoint = Vector2.init(platform.rec.x, platform.rec.y);
             // var edgePoint = Vector2.init(platform.rec.x + platform.rec.width, platform.rec.y);
@@ -163,7 +170,16 @@ const Light = struct {
         self.bounds.y = self.pos.y - self.radius;
         self.bounds.width = self.pos.x + self.radius;
         self.bounds.height = self.pos.y + self.radius;
-        self.active = true;
+    }
+
+    fn deactivate(self: *Self) void {
+        self.active = false;
+        self.needsLightingUpdate = true;
+
+        rl.beginTextureMode(self.lightMask);
+        rl.clearBackground(rl.Color.white);
+        rl.gl.rlDrawRenderBatchActive();
+        rl.endTextureMode();
     }
 };
 
@@ -219,7 +235,7 @@ const Ball = struct {
         self.clearCursors();
         self.state = .sunk;
         rl.playSound(SUNK);
-        self.light.active = false;
+        self.light.deactivate();
     }
 };
 
@@ -569,7 +585,7 @@ pub fn main() !void {
                 );
             }
             // balls
-            for (state.balls.slice()) |ball| {
+            for (state.balls.slice()) |*ball| {
                 switch (ball.state) {
                     .alive => {
                         rl.drawCircleV(ball.pos, ball.radius, rl.Color.blue);
@@ -608,6 +624,7 @@ pub fn main() !void {
                     },
                     .dead => {
                         rl.drawCircleV(ball.pos, ball.radius, rl.Color.dark_gray);
+                        ball.light.deactivate();
                     },
                     .sunk => {},
                 }
@@ -792,7 +809,7 @@ fn processPhysics(balls: []Ball, holes: []Hole, platforms: []Platform) void {
                     // make the hole a little brighter as more balls are sunk
                     hole.light.intensity *= 1.25;
                     if (hole.remaining_balls <= 0) {
-                        hole.light.active = false;
+                        hole.light.deactivate();
                     }
                 }
             }
