@@ -17,8 +17,8 @@ pub const Lighting = struct {
     timeLoc: i32,
     cursorPositionXLoc: i32,
     cursorPositionYLoc: i32,
-    cursorPositionX: i32,
-    cursorPositionY: i32,
+    cursorPositionX: f32,
+    cursorPositionY: f32,
 
     pub fn init(width: i32, height: i32) Lighting {
         const imBlank: rl.Image = rl.genImageColor(width, height, rl.Color.black);
@@ -67,14 +67,15 @@ pub const Lighting = struct {
             }
         }
 
-        self.cursorPositionX = rl.getMouseX();
-        self.cursorPositionY = rl.getMouseY();
+        const cursorPosition = rl.getMousePosition();
+        self.cursorPositionX = cursorPosition.x;
+        self.cursorPositionY = cursorPosition.y;
     }
 
     pub fn draw(self: *Self) void {
         rl.setShaderValue(self.shader, self.timeLoc, &self.time, rl.ShaderUniformDataType.shader_uniform_float);
-        rl.setShaderValue(self.shader, self.cursorPositionXLoc, &self.cursorPositionX, rl.ShaderUniformDataType.shader_uniform_int);
-        rl.setShaderValue(self.shader, self.cursorPositionYLoc, &self.cursorPositionY, rl.ShaderUniformDataType.shader_uniform_int);
+        rl.setShaderValue(self.shader, self.cursorPositionXLoc, &self.cursorPositionX, rl.ShaderUniformDataType.shader_uniform_float);
+        rl.setShaderValue(self.shader, self.cursorPositionYLoc, &self.cursorPositionY, rl.ShaderUniformDataType.shader_uniform_float);
 
         rl.beginShaderMode(self.shader);
         rl.drawTexture(self.texture, 0, 0, rl.Color.white);
