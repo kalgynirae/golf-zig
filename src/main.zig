@@ -86,82 +86,83 @@ const Light = struct {
         rl.clearBackground(rl.Color.white);
 
         rl.gl.rlSetBlendFactors(rl.gl.rl_src_alpha, rl.gl.rl_src_alpha, rl.gl.rl_min);
-        rl.gl.rlSetBlendMode(rl.gl.rlBlendMode.rl_blend_custom);
+        rl.gl.rlSetBlendMode(@intFromEnum(rl.gl.rlBlendMode.rl_blend_custom));
 
-        rl.drawCircleGradient(self.pos.x, self.pos.y, self.radius, rl.colorAlpha(self.color, 0.0), self.color);
+        rl.drawCircleGradient(@intFromFloat(self.pos.x), @intFromFloat(self.pos.y), self.radius, rl.colorAlpha(rl.Color.white, 0.0), rl.Color.white);
 
         rl.gl.rlDrawRenderBatchActive();
 
-        rl.gl.rlSetBlendMode(rl.gl.rlBlendMode.rl_blend_alpha);
+        rl.gl.rlSetBlendMode(@intFromEnum(rl.gl.rlBlendMode.rl_blend_alpha));
         rl.gl.rlSetBlendFactors(rl.gl.rl_src_alpha, rl.gl.rl_blend_src_alpha, rl.gl.rl_max);
-        rl.gl.rlSetBlendMode(rl.gl.rlBlendMode.rl_blend_custom);
+        rl.gl.rlSetBlendMode(@intFromEnum(rl.gl.rlBlendMode.rl_blend_custom));
 
         for (self.shadows.slice()) |shadow| {
-            const points = [_]Vector2{
-                shadow.vertexUR, shadow.vertexUL, shadow.vertexLL, shadow.vertexLR,
+            const points = [4]Vector2{
+                shadow.v1, shadow.v2, shadow.v3, shadow.v4,
             };
-            rl.drawTriangleFan(points, rl.Color.white);
+            rl.drawTriangleFan(&points, rl.Color.white);
         }
 
         rl.gl.rlDrawRenderBatchActive();
 
-        rl.gl.rlSetBlendMode(rl.gl.rlBlendMode.rl_blend_alpha);
-
-        rl.endTextureMode(self.lightMask);
+        rl.gl.rlSetBlendMode(@intFromEnum(rl.gl.rlBlendMode.rl_blend_alpha));
+        rl.endTextureMode();
     }
 
-    pub fn update(self: *Self, state: GameState) void {
-        if (!self.active) {
-            return;
+    pub fn update(self: *Self, state: *const GameState) bool {
+        if (!self.active or !self.needsLightingUpdate) {
+            return false;
         }
 
         self.shadows = BoundedArray(ShadowVolume, 30).init(0) catch unreachable;
 
         for (state.platforms.slice()) |platform| {
-            // skip calculation if we're not inside of a platform
-            if (!rl.checkCollisionPointRec(self.pos, platform.rec)) {
-                continue;
-            }
-
-            // if a platform is outside of our light radius, skip it
-            if (!rl.checkCollisionRecs(self.bounds, platform.rec)) {
-                continue;
-            }
-
             // top side of platform
-            var shadowPoint = Vector2(platform.rec.x, platform.rec.y);
-            var edgePoint = Vector2(platform.rec.x + platform.rec.width, platform.rec.y);
-            if (self.pos.y > edgePoint.y) {
+            var shadowPoint = Vector2.init(platform.rec.x, platform.rec.y);
+            var edgePoint = Vector2.init(platform.rec.x + platform.rec.width, platform.rec.y);
+            if (self.pos.y < edgePoint.y) {
                 self.shadows.appendAssumeCapacity(ShadowVolume.fromPoints(self.pos, self.radius, shadowPoint, edgePoint));
             }
 
             // right side of platform
             shadowPoint = edgePoint;
-            edgePoint.y += platform.height;
-            if (self.pos.x < edgePoint.x) {
+            edgePoint.y += platform.rec.height;
+            if (self.pos.x > edgePoint.x) {
                 self.shadows.appendAssumeCapacity(ShadowVolume.fromPoints(self.pos, self.radius, shadowPoint, edgePoint));
             }
 
             // Bottom
             shadowPoint = edgePoint;
-            edgePoint.x -= platform.width;
-            if (self.pos.y < edgePoint.y) {
+            edgePoint.x -= platform.rec.width;
+            if (self.pos.y > edgePoint.y) {
                 self.shadows.appendAssumeCapacity(ShadowVolume.fromPoints(self.pos, self.radius, shadowPoint, edgePoint));
             }
 
             // Left
             shadowPoint = edgePoint;
-            edgePoint -= platform.height;
-            if (self.post.x > edgePoint.x) {
+            edgePoint.y -= platform.rec.height;
+            if (self.pos.x < edgePoint.x) {
                 self.shadows.appendAssumeCapacity(ShadowVolume.fromPoints(self.pos, self.radius, shadowPoint, edgePoint));
             }
 
-            const platformShadow = ShadowVolume.init(Vector2(platform.x, platform.y), Vector2(platform.x, platform.y + platform.height), Vector2(platform.x + platform.width, platform.y + platform.height), Vector2(platform.x + platform.width, platform.y));
-            self.shadows.appendAssumeCapacity(platformShadow);
+            //const platformShadow = ShadowVolume.init(Vector2.init(platform.rec.x, platform.rec.y), Vector2.init(platform.rec.x, platform.rec.y + platform.rec.height), Vector2.init(platform.rec.x + platform.rec.width, platform.rec.y + platform.rec.height), Vector2.init(platform.rec.x + platform.rec.width, platform.rec.y));
+            //self.shadows.appendAssumeCapacity(platformShadow);
             self.draw();
         }
 
         self.needsLightingUpdate = false;
+        std.debug.print("Light at {} has {} shadows\n", .{ self.pos, self.shadows.len });
+        return true;
+    }
+
+    pub fn doMove(self: *Self, pos: Vector2) void {
+        self.needsLightingUpdate = true;
+        self.pos = pos;
+        self.bounds.x = self.pos.x - self.radius;
+        self.bounds.y = self.pos.y - self.radius;
+        self.bounds.width = self.pos.x + self.radius;
+        self.bounds.height = self.pos.y + self.radius;
+        self.active = true;
     }
 };
 
@@ -185,7 +186,7 @@ const Ball = struct {
             .velocity = Vector2.zero(),
             .spin = Vector2.zero(),
 
-            .light = Light.init(Vector2.init(x, y), rl.Color.white, true, 5.0, CURSOR_SPACING * 2.0),
+            .light = Light.init(Vector2.init(x, y), rl.Color.white, true, 50.0, CURSOR_SPACING * 20.0),
 
             .cursors = BoundedArray(Cursor, 8).init(0) catch unreachable,
             .state = .alive,
@@ -318,7 +319,10 @@ pub fn main() !void {
 
     var pastStates = ArrayList(GameState).init(allocator);
     var futureStates = ArrayList(GameState).init(allocator);
-    var state = level1();
+    var state = level2();
+    for (state.balls.slice()) |*ball| {
+        _ = ball.light.update(&state);
+    }
 
     var last_mode: GameMode = state.mode;
     var hovered_ball: ?usize = null;
@@ -326,6 +330,8 @@ pub fn main() !void {
     var any_set_cursors = false;
     var potentially_adding_cursor = false;
     var strength: ?u32 = null;
+
+    const globalLightMask: rl.RenderTexture2D = rl.loadRenderTexture(WIDTH, HEIGHT);
 
     rl.initAudioDevice();
     defer rl.closeAudioDevice();
@@ -467,6 +473,33 @@ pub fn main() !void {
                     }
                 }
 
+                // -- LIGHTING ---------------------------
+                var dirtyLighting = false;
+                for (state.balls.slice()) |*ball| {
+                    if (ball.light.update(&state)) {
+                        dirtyLighting = true;
+                    }
+                }
+
+                if (dirtyLighting) {
+                    // regenerate the global lightmap
+                    rl.beginTextureMode(globalLightMask);
+
+                    rl.clearBackground(rl.Color.black);
+
+                    rl.gl.rlSetBlendFactors(rl.gl.rl_src_alpha, rl.gl.rl_src_alpha, rl.gl.rl_min);
+                    rl.gl.rlSetBlendMode(@intFromEnum(rl.gl.rlBlendMode.rl_blend_custom));
+
+                    for (state.balls.slice()) |ball| {
+                        rl.drawTextureRec(ball.light.lightMask.texture, rl.Rectangle.init(0, 0, @floatFromInt(WIDTH), @floatFromInt(HEIGHT)), Vector2.zero(), rl.Color.white);
+                    }
+                    rl.gl.rlDrawRenderBatchActive();
+
+                    rl.gl.rlSetBlendMode(@intFromEnum(rl.gl.rlBlendMode.rl_blend_alpha));
+
+                    rl.endTextureMode();
+                }
+
                 // -- PHYSICS ----------------------------
                 processPhysics(
                     state.balls.slice(),
@@ -559,6 +592,10 @@ pub fn main() !void {
                     .sunk => {},
                 }
             }
+
+            // draw the shadow map
+            rl.drawTextureRec(globalLightMask.texture, rl.Rectangle.init(0, 0, @floatFromInt(WIDTH), @floatFromInt(HEIGHT)), Vector2.zero(), rl.colorAlpha(rl.Color.white, 0.75));
+
             // cursors
             for (state.balls.slice()) |ball| {
                 for (ball.cursors.slice()) |cursor| {
@@ -672,6 +709,7 @@ fn processPhysics(balls: []Ball, holes: []Hole, platforms: []Platform) void {
                 rl.playSound(LOWCLICK);
             }
             ball.pos = ball.pos.add(delta.reflect(reflection));
+            ball.light.doMove(ball.pos);
             ball.velocity = ball.velocity.reflect(reflection);
 
             if (step == 0) {
