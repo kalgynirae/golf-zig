@@ -88,24 +88,16 @@ const CursorState = enum {
     set,
 };
 
-const HoleAlignment = enum {
-    good,
-    neutral,
-    evil,
-};
-
 const Hole = struct {
     pos: Vector2,
     radius: f32,
-    alignment: HoleAlignment,
-    ball_count: u32,
+    remaining_balls: u32,
 
-    fn init(x: f32, y: f32, alignment: HoleAlignment) Hole {
+    fn init(x: f32, y: f32, needed_balls: u32) Hole {
         return Hole{
             .pos = Vector2.init(x, y),
             .radius = 24,
-            .alignment = alignment,
-            .ball_count = 0,
+            .remaining_balls = needed_balls,
         };
     }
 };
@@ -350,15 +342,15 @@ pub fn main() !void {
             }
             // holes
             for (state.holes.slice()) |hole| {
-                switch (hole.alignment) {
-                    .good => {
-                        rl.drawCircleV(hole.pos, hole.radius, rl.Color.init(0, 60, 10, 255));
+                switch (hole.remaining_balls) {
+                    0 => {
+                        rl.drawCircleV(hole.pos, hole.radius, rl.Color.init(35, 65, 75, 255));
                     },
-                    .neutral => {
-                        rl.drawCircleV(hole.pos, hole.radius, rl.Color.init(40, 60, 50, 255));
+                    1 => {
+                        rl.drawCircleV(hole.pos, hole.radius, rl.Color.init(0, 60, 20, 255));
                     },
-                    .evil => {
-                        rl.drawCircleV(hole.pos, hole.radius, rl.Color.init(50, 20, 10, 255));
+                    else => {
+                        rl.drawCircleV(hole.pos, hole.radius, rl.Color.init(0, 30, 0, 255));
                     },
                 }
             }
@@ -537,9 +529,10 @@ fn processPhysics(balls: []Ball, holes: []Hole, platforms: []Platform) void {
         for (balls) |*ball| {
             if (ball.state != .alive) continue;
             for (holes) |*hole| {
+                if (hole.remaining_balls == 0) continue;
                 if (rl.checkCollisionPointCircle(ball.pos, hole.pos, (hole.radius - (ball.radius / 2)))) {
                     ball.sink();
-                    hole.ball_count += 1;
+                    hole.remaining_balls -= 1;
                 }
             }
         }
@@ -639,8 +632,8 @@ fn level1() GameState {
     var state = GameState.init(1);
     state.balls.appendAssumeCapacity(Ball.init(50, 50));
     state.balls.appendAssumeCapacity(Ball.init(500, 100));
-    state.holes.appendAssumeCapacity(Hole.init(600, 400, .good));
-    state.holes.appendAssumeCapacity(Hole.init(500, 520, .evil));
+    state.holes.appendAssumeCapacity(Hole.init(600, 400, 1));
+    state.holes.appendAssumeCapacity(Hole.init(500, 520, 1));
     state.platforms.appendAssumeCapacity(Platform.init(20, 20, 460, 560));
     state.platforms.appendAssumeCapacity(Platform.init(460, 40, 200, 500));
     return state;
@@ -652,7 +645,7 @@ fn level2() GameState {
     state.platforms.appendAssumeCapacity(Platform.init(200, 250, 400, 100));
     state.platforms.appendAssumeCapacity(Platform.init(600, 50, 180, 500));
 
-    state.holes.appendAssumeCapacity(Hole.init(710, 500, .good));
+    state.holes.appendAssumeCapacity(Hole.init(710, 500, 1));
 
     state.balls.appendAssumeCapacity(Ball.init(90, 100));
 
@@ -666,7 +659,7 @@ fn level3() GameState {
         state.platforms.appendAssumeCapacity(Platform.init(115 + 190 * i, 240, 95, 100));
     }
 
-    state.holes.appendAssumeCapacity(Hole.init(735, 272, .good));
+    state.holes.appendAssumeCapacity(Hole.init(735, 272, 1));
 
     state.balls.appendAssumeCapacity(Ball.init(68, 350));
 
@@ -677,9 +670,9 @@ fn level4() GameState {
     var state = GameState.init(4);
     state.platforms.appendAssumeCapacity(Platform.init(50, 50, 700, 500));
 
-    state.holes.appendAssumeCapacity(Hole.init(200, 460, .good));
-    state.holes.appendAssumeCapacity(Hole.init(400, 460, .neutral));
-    state.holes.appendAssumeCapacity(Hole.init(600, 460, .evil));
+    state.holes.appendAssumeCapacity(Hole.init(200, 460, 0));
+    state.holes.appendAssumeCapacity(Hole.init(400, 460, 2));
+    state.holes.appendAssumeCapacity(Hole.init(600, 460, 1));
 
     state.balls.appendAssumeCapacity(Ball.init(200, 120));
     state.balls.appendAssumeCapacity(Ball.init(400, 120));
@@ -696,7 +689,7 @@ fn level5() GameState {
     state.platforms.appendAssumeCapacity(Platform.init(400, 350, 150, 150));
     state.platforms.appendAssumeCapacity(Platform.init(550, 100, 200, 400));
 
-    state.holes.appendAssumeCapacity(Hole.init(600, 300, .good));
+    state.holes.appendAssumeCapacity(Hole.init(600, 300, 2));
 
     state.balls.appendAssumeCapacity(Ball.init(90, 165));
     state.balls.appendAssumeCapacity(Ball.init(90, 435));
