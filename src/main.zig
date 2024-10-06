@@ -187,7 +187,7 @@ const Ball = struct {
             .velocity = Vector2.zero(),
             .spin = Vector2.zero(),
 
-            .light = Light.init(Vector2.init(x, y), rl.Color.white, true, 50.0, CURSOR_SPACING * 20.0),
+            .light = Light.init(Vector2.init(x, y), rl.Color.white, true, 50.0, CURSOR_SPACING * 15.0),
 
             .cursors = BoundedArray(Cursor, 8).init(0) catch unreachable,
             .state = .alive,
