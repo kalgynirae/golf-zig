@@ -46,15 +46,26 @@ const Ball = struct {
         self.cursors.appendAssumeCapacity(Cursor.init(radius));
     }
 
+    fn clearCursors(self: *Self) void {
+        self.cursors.resize(0) catch unreachable;
+    }
+
     fn popCursor(self: *Self) void {
         _ = self.cursors.popOrNull();
     }
+
     fn hit(self: *Self, strength: u32) void {
         if (self.cursors.len > 0) {
             const cursor = self.cursors.orderedRemove(0);
             const delta = cursor.angle.normalize().scale(@floatFromInt(strength));
             self.velocity = self.velocity.scale(0.2).add(delta);
         }
+    }
+
+    fn sink(self: *Self) void {
+        self.clearCursors();
+        self.state = .sunk;
+        rl.playSound(SUNK);
     }
 };
 
@@ -415,11 +426,11 @@ pub fn main() !void {
 }
 
 fn processPhysics(balls: []Ball, holes: []Hole, platforms: []Platform) void {
-    const STEPS = 1;
+    const STEPS = 8;
     const SCALE: f32 = 1.0 / @as(f32, @floatFromInt(STEPS));
     const MAX_SPEED: f32 = 25.0 / @as(f32, @floatFromInt(STEPS));
 
-    for (0..STEPS) |_| {
+    for (0..STEPS) |step| {
         for (balls) |*ball| {
             if (ball.state == .sunk) {
                 continue;
@@ -466,33 +477,35 @@ fn processPhysics(balls: []Ball, holes: []Hole, platforms: []Platform) void {
             ball.pos = ball.pos.add(delta.reflect(reflection));
             ball.velocity = ball.velocity.reflect(reflection);
 
-            // spin
-            // reduce in perpendicular direction
-            const velocity_dir = ball.velocity.normalize();
-            const parallel_spin_len = ball.spin.dotProduct(velocity_dir);
-            const parallel_spin = velocity_dir.scale(parallel_spin_len);
-            // rl.drawLineEx(ball.pos, ball.pos.add(parallel_component), 5, rl.Color.red);
-            const perpendicular_spin = ball.spin.subtract(parallel_spin);
-            // rl.drawLineEx(ball.pos, ball.pos.add(perpendicular_component.scale(10)), 5, rl.Color.yellow);
-            ball.spin = ball.spin.subtract(perpendicular_spin.scale(0.1).scale(SCALE));
+            if (step == 0) {
+                // spin
+                // reduce in perpendicular direction
+                const velocity_dir = ball.velocity.normalize();
+                const parallel_spin_len = ball.spin.dotProduct(velocity_dir);
+                const parallel_spin = velocity_dir.scale(parallel_spin_len);
+                // rl.drawLineEx(ball.pos, ball.pos.add(parallel_component), 5, rl.Color.red);
+                const perpendicular_spin = ball.spin.subtract(parallel_spin);
+                // rl.drawLineEx(ball.pos, ball.pos.add(perpendicular_component.scale(10)), 5, rl.Color.yellow);
+                ball.spin = ball.spin.subtract(perpendicular_spin.scale(0.1));
 
-            // normalize toward velocity in parallel direction
-            const velocity_spin_diff = ball.velocity.length() - parallel_spin_len;
-            if (velocity_spin_diff > 0) {
-                ball.spin = ball.spin.add(velocity_dir.scale(velocity_spin_diff).scale(0.2).scale(SCALE));
-            } else {
-                // backward spin decreases faster
-                ball.spin = ball.spin.add(velocity_dir.scale(velocity_spin_diff).scale(0.3).scale(SCALE));
+                // normalize toward velocity in parallel direction
+                const velocity_spin_diff = ball.velocity.length() - parallel_spin_len;
+                if (velocity_spin_diff > 0) {
+                    ball.spin = ball.spin.add(velocity_dir.scale(velocity_spin_diff).scale(0.2));
+                } else {
+                    // backward spin decreases faster
+                    ball.spin = ball.spin.add(velocity_dir.scale(velocity_spin_diff).scale(0.3));
+                }
+
+                // spin adjusts velocity
+                ball.velocity = ball.velocity.add(ball.spin.subtract(ball.velocity).scale(0.01));
+
+                // friction
+                // parallel spin reduces friction
+                const friction = 0.08 - 0.05 * (parallel_spin_len / ball.velocity.length());
+                ball.spin = ball.spin.scale(1.0 - friction);
+                ball.velocity = ball.velocity.scale(1.0 - friction);
             }
-
-            // spin adjusts velocity
-            ball.velocity = ball.velocity.add(ball.spin.subtract(ball.velocity).scale(0.01));
-
-            // friction
-            // parallel spin reduces friction
-            const friction = 0.08 - 0.05 * (parallel_spin_len / ball.velocity.length());
-            ball.spin = ball.spin.scale(1.0 - friction).scale(SCALE);
-            ball.velocity = ball.velocity.scale(1.0 - friction).scale(SCALE);
         }
 
         // other balls
@@ -518,9 +531,8 @@ fn processPhysics(balls: []Ball, holes: []Hole, platforms: []Platform) void {
             if (ball.state != .alive) continue;
             for (holes) |*hole| {
                 if (rl.checkCollisionPointCircle(ball.pos, hole.pos, (hole.radius - (ball.radius / 2)))) {
-                    ball.state = .sunk;
+                    ball.sink();
                     hole.ball_count += 1;
-                    rl.playSound(SUNK);
                 }
             }
         }
@@ -671,12 +683,13 @@ fn level4() GameState {
 
 fn level5() GameState {
     var state = GameState.init(5);
-    state.platforms.appendAssumeCapacity(Platform.init(60, 250, 680, 100));
-    state.platforms.appendAssumeCapacity(Platform.init(400, 60, 340, 480));
-    state.platforms.appendAssumeCapacity(Platform.init(60, 100, 80, 140));
-    state.platforms.appendAssumeCapacity(Platform.init(60, 360, 80, 140));
+    state.platforms.appendAssumeCapacity(Platform.init(50, 100, 200, 400));
+    state.platforms.appendAssumeCapacity(Platform.init(250, 200, 150, 200));
+    state.platforms.appendAssumeCapacity(Platform.init(400, 100, 150, 150));
+    state.platforms.appendAssumeCapacity(Platform.init(400, 350, 150, 150));
+    state.platforms.appendAssumeCapacity(Platform.init(550, 100, 200, 400));
 
-    state.holes.appendAssumeCapacity(Hole.init(700, 300, .good));
+    state.holes.appendAssumeCapacity(Hole.init(600, 300, .good));
 
     state.balls.appendAssumeCapacity(Ball.init(90, 165));
     state.balls.appendAssumeCapacity(Ball.init(90, 435));
