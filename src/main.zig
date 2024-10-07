@@ -371,10 +371,14 @@ pub fn main() !void {
     defer rl.closeAudioDevice();
 
     CLICK = rl.loadSound("assets/click.wav");
+    defer rl.unloadSound(CLICK);
     LOWCLICK = rl.loadSound("assets/lowclick.wav");
+    defer rl.unloadSound(LOWCLICK);
     SUNK = rl.loadSound("assets/sunk.wav");
+    defer rl.unloadSound(SUNK);
 
     const music = rl.loadMusicStream("assets/placeholder-music.ogg");
+    defer rl.unloadMusicStream(music);
     rl.setMusicVolume(music, 0.4);
     rl.playMusicStream(music);
 
