@@ -343,7 +343,7 @@ var LOWCLICK: rl.Sound = undefined;
 var SUNK: rl.Sound = undefined;
 
 pub fn main() !void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
     defer arena.deinit();
 
     const allocator = arena.allocator();
