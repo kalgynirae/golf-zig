@@ -309,7 +309,7 @@ const GameMode = enum {
 const GameState = struct {
     const Self = @This();
 
-    levelnum: usize,
+    levelnum: u32,
     mode: GameMode = .playing,
     next_mode: ?GameMode = null,
     shots: u32 = 0,
@@ -318,7 +318,7 @@ const GameState = struct {
     holes: BoundedArray(Hole, 16),
     platforms: BoundedArray(Platform, 32),
 
-    fn init(levelnum: usize) Self {
+    fn init(levelnum: u32) Self {
         return Self{
             .levelnum = levelnum,
             .balls = BoundedArray(Ball, 16).init(0) catch unreachable,
@@ -364,6 +364,7 @@ pub fn main() !void {
     var any_set_cursors = false;
     var potentially_adding_cursor = false;
     var strength: ?u32 = null;
+    var next_level: ?u32 = null;
 
     const globalLightMask: rl.RenderTexture2D = rl.loadRenderTexture(WIDTH, HEIGHT);
 
@@ -402,7 +403,9 @@ pub fn main() !void {
             break :main;
         }
 
-        if (input.level) |levelnum| {
+        if (input.level) |n| next_level = n;
+
+        if (next_level) |levelnum| {
             state = switch (levelnum) {
                 1 => level1(),
                 2 => level2(),
@@ -416,6 +419,7 @@ pub fn main() !void {
             };
             pastStates.clearRetainingCapacity();
             futureStates.clearRetainingCapacity();
+            next_level = null;
         }
 
         rl.updateMusicStream(music);
@@ -657,10 +661,10 @@ pub fn main() !void {
             if (potentially_adding_cursor) {
                 if (hovered_ball) |i| {
                     const ball = state.balls.get(i);
-                    const next_level: u32 = ball.cursors.len + 1;
+                    const level: u32 = ball.cursors.len + 1;
                     rl.drawCircleLinesV(
                         ball.pos,
-                        ball.radius + CURSOR_SPACING * @as(f32, @floatFromInt(next_level)),
+                        ball.radius + CURSOR_SPACING * @as(f32, @floatFromInt(level)),
                         rl.Color.sky_blue,
                     );
                 }
@@ -696,6 +700,18 @@ pub fn main() !void {
         strength = null;
         if (!potentially_adding_cursor and !any_aiming_cursors) {
             strength = getHitStrength();
+        }
+
+        // Check if level is complete
+        levelcomplete: {
+            for (state.holes.constSlice()) |hole| {
+                if (hole.remaining_balls > 0) break :levelcomplete;
+            }
+            if (state.levelnum < 5) {
+                if (rg.guiButton(rl.Rectangle.init(300, 200, 100, 50), "Next Level") == 1) {
+                    next_level = state.levelnum + 1;
+                }
+            }
         }
     }
 }
@@ -830,7 +846,7 @@ const Input = struct {
     primary: bool = false,
     secondary: bool = false,
     shift: bool = false,
-    level: ?usize = null,
+    level: ?u32 = null,
 };
 
 fn getInput() Input {
