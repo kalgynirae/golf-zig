@@ -1,11 +1,16 @@
 .{
-    .name = "golf-zig",
-    .version = "0.0.0",
-    .minimum_zig_version = "0.13.0",
+    .name = .golf,
+    .fingerprint = 0xa9a77c7d216138d8,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.15.1",
     .dependencies = .{
-        .@"raylib-zig" = .{
-            .url = "https://github.com/Not-Nik/raylib-zig/archive/devel.tar.gz",
-            .hash = "12206dbd1510ce7e5270c725f980ca3a5ff3db47adeeda8d51ebe8527d6b27dd60a8",
+        .raylib_zig = .{
+            .url = "git+https://github.com/raylib-zig/raylib-zig?ref=devel#a4d18b2d1cf8fdddec68b5b084535fca0475f466",
+            .hash = "raylib_zig-5.6.0-dev-KE8REL5MBQAf3p497t52Xw9P7ojndIkVOWPXnLiLLw2P",
+        },
+        .bounded_array = .{
+            .url = "git+https://github.com/jedisct1/zig-bounded-array?ref=main#1dc4361da8ee667a2f352b938045e09bda8ea379",
+            .hash = "bounded_array-0.1.0-VF2RKohKAAAnG-uH_4cQr-Vc9eizfnpEgDL9U_g6a2oz",
         },
     },
     .paths = .{

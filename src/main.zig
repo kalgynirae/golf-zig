@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayList;
-const BoundedArray = std.BoundedArray;
+const ArrayList = std.ArrayListUnmanaged;
+const BoundedArray = @import("bounded_array").BoundedArray;
 
 const rl = @import("raylib");
 const Vector2 = rl.Vector2;
@@ -63,8 +63,8 @@ const Light = struct {
     bounds: rl.Rectangle,
     shadows: BoundedArray(ShadowVolume, 30),
 
-    pub fn init(pos: Vector2, color: rl.Color, active: bool, intensity: f32, radius: f32) Self {
-        const lightMask = rl.loadRenderTexture(WIDTH, HEIGHT);
+    pub fn init(pos: Vector2, color: rl.Color, active: bool, intensity: f32, radius: f32) !Self {
+        const lightMask = try rl.loadRenderTexture(WIDTH, HEIGHT);
         const bounds = rl.Rectangle.init(pos.x - radius, pos.y - radius, pos.x + radius, pos.y + radius);
 
         return Self{
@@ -87,7 +87,7 @@ const Light = struct {
 
         rl.gl.rlSetBlendFactors(rl.gl.rl_src_alpha, rl.gl.rl_src_alpha, rl.gl.rl_min);
         rl.gl.rlSetBlendMode(@intFromEnum(rl.gl.rlBlendMode.rl_blend_custom));
-        rl.beginBlendMode(rl.BlendMode.blend_custom);
+        rl.beginBlendMode(.custom);
 
         rl.drawCircleGradient(@intFromFloat(self.pos.x), @intFromFloat(self.pos.y), self.radius, rl.colorAlpha(self.color, 0.0), self.color);
 
@@ -97,7 +97,7 @@ const Light = struct {
         rl.gl.rlSetBlendMode(@intFromEnum(rl.gl.rlBlendMode.rl_blend_alpha));
         rl.gl.rlSetBlendFactors(rl.gl.rl_src_alpha, rl.gl.rl_blend_src_alpha, rl.gl.rl_max);
         rl.gl.rlSetBlendMode(@intFromEnum(rl.gl.rlBlendMode.rl_blend_custom));
-        rl.beginBlendMode(rl.BlendMode.blend_custom);
+        rl.beginBlendMode(.custom);
 
         for (self.shadows.slice()) |shadow| {
             const points = [4]Vector2{
@@ -196,14 +196,14 @@ const Ball = struct {
     cursors: BoundedArray(Cursor, 8),
     state: BallState,
 
-    fn init(x: f32, y: f32) Self {
+    fn init(x: f32, y: f32) !Self {
         return Self{
             .pos = Vector2.init(x, y),
             .radius = CURSOR_SPACING,
             .velocity = Vector2.zero(),
             .spin = Vector2.zero(),
 
-            .light = Light.init(Vector2.init(x, y), rl.Color.white, true, 50.0, CURSOR_SPACING * 15.0),
+            .light = try Light.init(Vector2.init(x, y), rl.Color.white, true, 50.0, CURSOR_SPACING * 15.0),
 
             .cursors = BoundedArray(Cursor, 8).init(0) catch unreachable,
             .state = .alive,
@@ -220,7 +220,7 @@ const Ball = struct {
     }
 
     fn popCursor(self: *Self) void {
-        _ = self.cursors.popOrNull();
+        _ = self.cursors.pop();
     }
 
     fn hit(self: *Self, strength: u32) void {
@@ -267,12 +267,12 @@ const Hole = struct {
 
     light: Light,
 
-    fn init(x: f32, y: f32, needed_balls: u32) Hole {
+    fn init(x: f32, y: f32, needed_balls: u32) !Self {
         return Hole{
             .pos = Vector2.init(x, y),
             .radius = 24,
             .remaining_balls = needed_balls,
-            .light = Light.init(Vector2.init(x, y), rl.Color.green, true, 70.0, CURSOR_SPACING * 10.0),
+            .light = try Light.init(Vector2.init(x, y), rl.Color.green, true, 70.0, CURSOR_SPACING * 10.0),
         };
     }
 
@@ -346,39 +346,37 @@ pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
     defer arena.deinit();
 
-    const allocator = arena.allocator();
+    const gpa = arena.allocator();
 
-    _ = rg.guiLoadIcons("assets/iconset.rgi", false);
-    _ = rg.guiSetIconScale(2);
     rl.setConfigFlags(rl.ConfigFlags{ .vsync_hint = true });
     rl.initWindow(WIDTH, HEIGHT, "Golf!");
     defer rl.closeWindow();
 
-    var pastStates = ArrayList(GameState).init(allocator);
-    var futureStates = ArrayList(GameState).init(allocator);
-    var state = level1();
+    var pastStates: ArrayList(GameState) = .empty;
+    var futureStates: ArrayList(GameState) = .empty;
+    var state = try level1();
 
     var last_mode: GameMode = state.mode;
-    var hovered_ball: ?usize = null;
+    var hovered_ball: ?u32 = null;
     var any_aiming_cursors = false;
     var any_set_cursors = false;
     var potentially_adding_cursor = false;
     var strength: ?u32 = null;
     var next_level: ?u32 = null;
 
-    const globalLightMask: rl.RenderTexture2D = rl.loadRenderTexture(WIDTH, HEIGHT);
+    const globalLightMask: rl.RenderTexture2D = try rl.loadRenderTexture(WIDTH, HEIGHT);
 
     rl.initAudioDevice();
     defer rl.closeAudioDevice();
 
-    CLICK = rl.loadSound("assets/click.wav");
+    CLICK = try rl.loadSound("assets/click.wav");
     defer rl.unloadSound(CLICK);
-    LOWCLICK = rl.loadSound("assets/lowclick.wav");
+    LOWCLICK = try rl.loadSound("assets/lowclick.wav");
     defer rl.unloadSound(LOWCLICK);
-    SUNK = rl.loadSound("assets/sunk.wav");
+    SUNK = try rl.loadSound("assets/sunk.wav");
     defer rl.unloadSound(SUNK);
 
-    const music = rl.loadMusicStream("assets/placeholder-music.ogg");
+    const music = try rl.loadMusicStream("assets/placeholder-music.ogg");
     defer rl.unloadMusicStream(music);
     rl.setMusicVolume(music, 0.4);
     rl.playMusicStream(music);
@@ -407,14 +405,14 @@ pub fn main() !void {
 
         if (next_level) |levelnum| {
             state = switch (levelnum) {
-                1 => level1(),
-                2 => level2(),
-                3 => level3(),
-                4 => level4(),
-                5 => level5(),
+                1 => try level1(),
+                2 => try level2(),
+                3 => try level3(),
+                4 => try level4(),
+                5 => try level5(),
                 else => |v| lvl: {
                     std.debug.print("\x1b[1;31mUnhandled level number: {}\x1b[0m\n", .{v});
-                    break :lvl level1();
+                    break :lvl try level1();
                 },
             };
             pastStates.clearRetainingCapacity();
@@ -443,14 +441,14 @@ pub fn main() !void {
                     state.mode = .paused;
                 }
                 if (input.undo) {
-                    if (pastStates.popOrNull()) |prev| {
-                        try futureStates.append(state);
+                    if (pastStates.pop()) |prev| {
+                        try futureStates.append(gpa, state);
                         state = prev;
                     }
                 }
                 if (input.redo) {
-                    if (futureStates.popOrNull()) |fut| {
-                        try pastStates.append(state);
+                    if (futureStates.pop()) |fut| {
+                        try pastStates.append(gpa, state);
                         state = fut;
                     }
                 }
@@ -464,7 +462,7 @@ pub fn main() !void {
                     const distance = ball.pos.subtract(mousepos).length();
                     if (distance < min_distance) {
                         min_distance = distance;
-                        hovered_ball = i;
+                        hovered_ball = @intCast(i);
                     }
                 }
 
@@ -483,7 +481,7 @@ pub fn main() !void {
                 potentially_adding_cursor = (!any_aiming_cursors and !any_set_cursors) or input.shift;
 
                 if (strength) |s| {
-                    try pastStates.append(state);
+                    try pastStates.append(gpa, state);
                     state = state.clone();
                     for (state.balls.slice()) |*ball| {
                         ball.hit(s);
@@ -532,7 +530,7 @@ pub fn main() !void {
 
                     rl.gl.rlSetBlendFactors(rl.gl.rl_src_alpha, rl.gl.rl_src_alpha, rl.gl.rl_min);
                     rl.gl.rlSetBlendMode(@intFromEnum(rl.gl.rlBlendMode.rl_blend_custom));
-                    rl.beginBlendMode(rl.BlendMode.blend_custom);
+                    rl.beginBlendMode(.custom);
 
                     for (state.holes.slice()) |hole| {
                         rl.drawTextureRec(hole.light.lightMask.texture, rl.Rectangle.init(0, 0, @floatFromInt(WIDTH), @floatFromInt(HEIGHT)), Vector2.zero(), hole.light.color);
@@ -585,7 +583,7 @@ pub fn main() !void {
                 rl.drawCircleV(hole.pos, hole.radius, hole.getColor());
 
                 rl.drawText(
-                    std.fmt.allocPrintZ(allocator, "{}", .{hole.remaining_balls}) catch unreachable,
+                    std.fmt.allocPrintSentinel(gpa, "{}", .{hole.remaining_balls}, 0) catch unreachable,
                     @intFromFloat(hole.pos.x - 4),
                     @intFromFloat(hole.pos.y - 2),
                     32,
@@ -661,7 +659,7 @@ pub fn main() !void {
             if (potentially_adding_cursor) {
                 if (hovered_ball) |i| {
                     const ball = state.balls.get(i);
-                    const level: u32 = ball.cursors.len + 1;
+                    const level: u32 = @as(u32, @intCast(ball.cursors.len)) + 1;
                     rl.drawCircleLinesV(
                         ball.pos,
                         ball.radius + CURSOR_SPACING * @as(f32, @floatFromInt(level)),
@@ -676,21 +674,21 @@ pub fn main() !void {
 
         rl.drawText("Golf!", 710, 10, 32, rl.Color.light_gray);
         rl.drawText(
-            std.fmt.allocPrintZ(allocator, "Level: {}", .{state.levelnum}) catch unreachable,
+            std.fmt.allocPrintSentinel(gpa, "Level: {}", .{state.levelnum}, 0) catch unreachable,
             710,
             42,
             16,
             rl.Color.light_gray,
         );
         rl.drawText(
-            std.fmt.allocPrintZ(allocator, "Shots: {}", .{state.shots}) catch unreachable,
+            std.fmt.allocPrintSentinel(gpa, "Shots: {}", .{state.shots}, 0) catch unreachable,
             710,
             58,
             16,
             rl.Color.light_gray,
         );
         rl.drawText(
-            std.fmt.allocPrintZ(allocator, "{} FPS", .{rl.getFPS()}) catch unreachable,
+            std.fmt.allocPrintSentinel(gpa, "{} FPS", .{rl.getFPS()}, 0) catch unreachable,
             720,
             580,
             16,
@@ -708,7 +706,7 @@ pub fn main() !void {
                 if (hole.remaining_balls > 0) break :levelcomplete;
             }
             if (state.levelnum < 5) {
-                if (rg.guiButton(rl.Rectangle.init(300, 200, 100, 50), "Next Level") == 1) {
+                if (rg.button(rl.Rectangle.init(300, 200, 100, 50), "Next Level")) {
                     next_level = state.levelnum + 1;
                 }
             }
@@ -851,58 +849,58 @@ const Input = struct {
 
 fn getInput() Input {
     var input = Input{};
-    if (rl.isKeyPressed(.key_q)) {
+    if (rl.isKeyPressed(.q)) {
         input.quit = true;
     }
-    if (rl.isKeyPressed(.key_p)) {
+    if (rl.isKeyPressed(.p)) {
         input.pause = true;
     }
-    if (rl.isKeyPressed(.key_t)) {
+    if (rl.isKeyPressed(.t)) {
         input.tick = true;
     }
-    input.shift = rl.isKeyDown(.key_left_shift) or rl.isKeyDown(.key_right_shift);
-    if (rl.isKeyPressed(.key_u) or rl.isKeyPressed(.key_z)) {
+    input.shift = rl.isKeyDown(.left_shift) or rl.isKeyDown(.right_shift);
+    if (rl.isKeyPressed(.u) or rl.isKeyPressed(.z)) {
         if (input.shift) {
             input.redo = true;
         } else {
             input.undo = true;
         }
     }
-    if (rl.isKeyPressed(.key_space) or rl.isMouseButtonPressed(.mouse_button_left)) {
+    if (rl.isKeyPressed(.space) or rl.isMouseButtonPressed(.left)) {
         input.primary = true;
     }
-    if (rl.isKeyPressed(.key_backspace) or rl.isMouseButtonPressed(.mouse_button_right)) {
+    if (rl.isKeyPressed(.backspace) or rl.isMouseButtonPressed(.right)) {
         input.secondary = true;
     }
 
-    if (rl.isKeyPressed(.key_one)) {
+    if (rl.isKeyPressed(.one)) {
         input.level = 1;
     }
-    if (rl.isKeyPressed(.key_two)) {
+    if (rl.isKeyPressed(.two)) {
         input.level = 2;
     }
-    if (rl.isKeyPressed(.key_three)) {
+    if (rl.isKeyPressed(.three)) {
         input.level = 3;
     }
-    if (rl.isKeyPressed(.key_four)) {
+    if (rl.isKeyPressed(.four)) {
         input.level = 4;
     }
-    if (rl.isKeyPressed(.key_five)) {
+    if (rl.isKeyPressed(.five)) {
         input.level = 5;
     }
-    if (rl.isKeyPressed(.key_six)) {
+    if (rl.isKeyPressed(.six)) {
         input.level = 6;
     }
-    if (rl.isKeyPressed(.key_seven)) {
+    if (rl.isKeyPressed(.seven)) {
         input.level = 7;
     }
-    if (rl.isKeyPressed(.key_eight)) {
+    if (rl.isKeyPressed(.eight)) {
         input.level = 8;
     }
-    if (rl.isKeyPressed(.key_nine)) {
+    if (rl.isKeyPressed(.nine)) {
         input.level = 9;
     }
-    if (rl.isKeyPressed(.key_zero)) {
+    if (rl.isKeyPressed(.zero)) {
         input.level = 10;
     }
 
@@ -911,75 +909,75 @@ fn getInput() Input {
 
 fn getHitStrength() ?u32 {
     var strength: ?u32 = null;
-    if (rg.guiButton(rl.Rectangle.init(0, HEIGHT - 50, WIDTH / 4, 50), "#220#") != 0) {
+    if (rg.button(rl.Rectangle.init(0, HEIGHT - 50, WIDTH / 4, 50), "#220#")) {
         strength = 5;
     }
-    if (rg.guiButton(rl.Rectangle.init(1 * (WIDTH / 4), HEIGHT - 50, WIDTH / 4, 50), "#221#") != 0) {
+    if (rg.button(rl.Rectangle.init(1 * (WIDTH / 4), HEIGHT - 50, WIDTH / 4, 50), "#221#")) {
         strength = 15;
     }
-    if (rg.guiButton(rl.Rectangle.init(2 * (WIDTH / 4), HEIGHT - 50, WIDTH / 4, 50), "#222#") != 0) {
+    if (rg.button(rl.Rectangle.init(2 * (WIDTH / 4), HEIGHT - 50, WIDTH / 4, 50), "#222#")) {
         strength = 35;
     }
-    if (rg.guiButton(rl.Rectangle.init(3 * (WIDTH / 4), HEIGHT - 50, WIDTH / 4, 50), "#223#") != 0) {
+    if (rg.button(rl.Rectangle.init(3 * (WIDTH / 4), HEIGHT - 50, WIDTH / 4, 50), "#223#")) {
         strength = 80;
     }
     return strength;
 }
 
-fn level1() GameState {
+fn level1() !GameState {
     var state = GameState.init(1);
-    state.balls.appendAssumeCapacity(Ball.init(50, 50));
-    state.balls.appendAssumeCapacity(Ball.init(500, 100));
-    state.holes.appendAssumeCapacity(Hole.init(600, 400, 1));
-    state.holes.appendAssumeCapacity(Hole.init(500, 520, 1));
+    state.balls.appendAssumeCapacity(try Ball.init(50, 50));
+    state.balls.appendAssumeCapacity(try Ball.init(500, 100));
+    state.holes.appendAssumeCapacity(try Hole.init(600, 400, 1));
+    state.holes.appendAssumeCapacity(try Hole.init(500, 520, 1));
     state.platforms.appendAssumeCapacity(Platform.init(20, 20, 460, 560));
     state.platforms.appendAssumeCapacity(Platform.init(460, 40, 200, 500));
     return state;
 }
 
-fn level2() GameState {
+fn level2() !GameState {
     var state = GameState.init(2);
     state.platforms.appendAssumeCapacity(Platform.init(20, 50, 180, 500));
     state.platforms.appendAssumeCapacity(Platform.init(200, 250, 400, 100));
     state.platforms.appendAssumeCapacity(Platform.init(600, 50, 180, 500));
 
-    state.holes.appendAssumeCapacity(Hole.init(710, 500, 1));
+    state.holes.appendAssumeCapacity(try Hole.init(710, 500, 1));
 
-    state.balls.appendAssumeCapacity(Ball.init(90, 100));
+    state.balls.appendAssumeCapacity(try Ball.init(90, 100));
 
     return state;
 }
 
-fn level3() GameState {
+fn level3() !GameState {
     var state = GameState.init(3);
     inline for (0..4) |i| {
         state.platforms.appendAssumeCapacity(Platform.init(20 + 190 * i, 260, 95, 100));
         state.platforms.appendAssumeCapacity(Platform.init(115 + 190 * i, 240, 95, 100));
     }
 
-    state.holes.appendAssumeCapacity(Hole.init(735, 272, 1));
+    state.holes.appendAssumeCapacity(try Hole.init(735, 272, 1));
 
-    state.balls.appendAssumeCapacity(Ball.init(68, 350));
+    state.balls.appendAssumeCapacity(try Ball.init(68, 350));
 
     return state;
 }
 
-fn level4() GameState {
+fn level4() !GameState {
     var state = GameState.init(4);
     state.platforms.appendAssumeCapacity(Platform.init(50, 50, 700, 500));
 
-    state.holes.appendAssumeCapacity(Hole.init(200, 460, 0));
-    state.holes.appendAssumeCapacity(Hole.init(400, 460, 2));
-    state.holes.appendAssumeCapacity(Hole.init(600, 460, 1));
+    state.holes.appendAssumeCapacity(try Hole.init(200, 460, 0));
+    state.holes.appendAssumeCapacity(try Hole.init(400, 460, 2));
+    state.holes.appendAssumeCapacity(try Hole.init(600, 460, 1));
 
-    state.balls.appendAssumeCapacity(Ball.init(200, 120));
-    state.balls.appendAssumeCapacity(Ball.init(400, 120));
-    state.balls.appendAssumeCapacity(Ball.init(600, 120));
+    state.balls.appendAssumeCapacity(try Ball.init(200, 120));
+    state.balls.appendAssumeCapacity(try Ball.init(400, 120));
+    state.balls.appendAssumeCapacity(try Ball.init(600, 120));
 
     return state;
 }
 
-fn level5() GameState {
+fn level5() !GameState {
     var state = GameState.init(5);
     state.platforms.appendAssumeCapacity(Platform.init(50, 100, 200, 400));
     state.platforms.appendAssumeCapacity(Platform.init(250, 200, 150, 200));
@@ -987,10 +985,10 @@ fn level5() GameState {
     state.platforms.appendAssumeCapacity(Platform.init(400, 350, 150, 150));
     state.platforms.appendAssumeCapacity(Platform.init(550, 100, 200, 400));
 
-    state.holes.appendAssumeCapacity(Hole.init(600, 300, 2));
+    state.holes.appendAssumeCapacity(try Hole.init(600, 300, 2));
 
-    state.balls.appendAssumeCapacity(Ball.init(90, 165));
-    state.balls.appendAssumeCapacity(Ball.init(90, 435));
+    state.balls.appendAssumeCapacity(try Ball.init(90, 165));
+    state.balls.appendAssumeCapacity(try Ball.init(90, 435));
 
     return state;
 }
